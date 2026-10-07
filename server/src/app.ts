@@ -42,9 +42,11 @@ export function createApp() {
           connectSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
-          upgradeInsecureRequests: config.isProduction ? [] : null,
+          // Only force HTTPS when the app is actually served over HTTPS (COOKIE_SECURE=true).
+          upgradeInsecureRequests: config.cookieSecure ? [] : null,
         },
       },
+      strictTransportSecurity: config.cookieSecure,
       crossOriginEmbedderPolicy: false,
     }),
   );
