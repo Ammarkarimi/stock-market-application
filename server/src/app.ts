@@ -62,7 +62,7 @@ export function createApp() {
   });
 
   api.get('/health', (_req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+    res.json({ status: 'ok', time: new Date().toISOString(), demo: config.seedDemoData });
   });
   api.use('/auth', authRoutes);
   api.use('/profile', requireAuth, profileRoutes);

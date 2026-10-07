@@ -1,0 +1,173 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic colour tokens. Components use these (bg-surface, text-muted, text-gain...) so both themes
+   come from one set of class names. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e9ecf1;
+  --border: #e3e7ed;
+  --border-strong: #cfd5de;
+  --text: #0f172a;
+  --text-muted: #5b6577;
+  --text-subtle: #8a93a3;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef0ff;
+  --primary-fg: #ffffff;
+  --gain: #058a5a;
+  --gain-soft: #e7f7ef;
+  --loss: #d42e2e;
+  --loss-soft: #fdecec;
+  --warning: #b45309;
+  --warning-soft: #fef5e6;
+  --info: #1d4ed8;
+  --info-soft: #e8efff;
+  --ring: rgba(79, 70, 229, 0.35);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 12px 32px -8px rgba(16, 24, 40, 0.18);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0a0d14;
+  --surface: #111622;
+  --surface-2: #161c2b;
+  --surface-3: #1e2638;
+  --border: #222b3d;
+  --border-strong: #2e3a51;
+  --text: #e6eaf2;
+  --text-muted: #9aa5b8;
+  --text-subtle: #6b778c;
+  --primary: #7c83f7;
+  --primary-hover: #959bfa;
+  --primary-soft: #1e2246;
+  --primary-fg: #0a0d14;
+  --gain: #2fd08b;
+  --gain-soft: #0f2a20;
+  --loss: #ff6b6b;
+  --loss-soft: #321619;
+  --warning: #f5b452;
+  --warning-soft: #2e2311;
+  --info: #79a5ff;
+  --info-soft: #172240;
+  --ring: rgba(124, 131, 247, 0.45);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-fg: var(--primary-fg);
+  --color-gain: var(--gain);
+  --color-gain-soft: var(--gain-soft);
+  --color-loss: var(--loss);
+  --color-loss-soft: var(--loss-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer utilities {
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum', 'cv11';
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}
+
+/* Brief background flash when a live price ticks up or down. */
+@keyframes flash-up {
+  from {
+    background-color: color-mix(in srgb, var(--gain) 14%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@keyframes flash-down {
+  from {
+    background-color: color-mix(in srgb, var(--loss) 14%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.flash-up {
+  animation: flash-up 0.6s ease-out;
+}
+.flash-down {
+  animation: flash-down 0.6s ease-out;
+}
+
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-track {
+  animation: ticker-scroll 60s linear infinite;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-up,
+  .flash-down,
+  .ticker-track {
+    animation: none;
+  }
+}
