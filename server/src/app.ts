@@ -4,14 +4,16 @@ import cookieParser from 'cookie-parser';
 import express, { Router } from 'express';
 import helmet from 'helmet';
 import { config } from './config.js';
-import { requireAuth } from './middleware/auth.js';
-import { loadSession } from './middleware/auth.js';
+import { loadSession, requireAuth } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import authRoutes from './routes/auth.routes.js';
+import marketRoutes from './routes/market.routes.js';
 import profileRoutes from './routes/profile.routes.js';
+import securitiesRoutes from './routes/securities.routes.js';
+import streamRoutes from './routes/stream.routes.js';
 
 export function createApp() {
   const app = express();
@@ -54,6 +56,9 @@ export function createApp() {
   });
   api.use('/auth', authRoutes);
   api.use('/profile', requireAuth, profileRoutes);
+  api.use('/market', requireAuth, marketRoutes);
+  api.use('/securities', requireAuth, securitiesRoutes);
+  api.use('/stream', requireAuth, streamRoutes);
   api.use(notFoundHandler);
 
   app.use('/api', api);

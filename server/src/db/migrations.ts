@@ -96,6 +96,7 @@ const migrations: Migration[] = [
         volatility         REAL NOT NULL DEFAULT 0.25,
         avg_volume         INTEGER NOT NULL DEFAULT 0,
         index_base_value   INTEGER,
+        underlying_symbol  TEXT,
         is_tradable        INTEGER NOT NULL DEFAULT 1,
         trading_status     TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (trading_status IN ('ACTIVE', 'HALTED')),
         listing_date       TEXT,

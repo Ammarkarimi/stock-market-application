@@ -1,9 +1,16 @@
 import { createApp } from './app.js';
 import { config } from './config.js';
 import { closeDatabase, db } from './db/index.js';
+import { initMarket, startSimulation, stopSimulation } from './market/engine.js';
+import { seedMarket } from './market/seedMarket.js';
 
 function main() {
   db();
+  console.log('Preparing market data...');
+  seedMarket();
+  initMarket();
+  if (config.simulationEnabled) startSimulation();
+
   const app = createApp();
   const server = app.listen(config.port, () => {
     console.log(`StockSphere API listening on http://localhost:${config.port}`);
@@ -11,6 +18,7 @@ function main() {
 
   const shutdown = () => {
     console.log('Shutting down...');
+    stopSimulation();
     server.close(() => {
       closeDatabase();
       process.exit(0);
