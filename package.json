@@ -1,0 +1,26 @@
+{
+  "name": "stocksphere",
+  "version": "1.0.0",
+  "private": true,
+  "description": "StockSphere - a stock market application to manage investments, trade, apply for IPOs and track the market.",
+  "license": "MIT",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w client && npm run build -w server",
+    "start": "npm run start -w server",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "db:reset": "npm run db:reset -w server",
+    "format": "prettier --write ."
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.9"
+  }
+}
