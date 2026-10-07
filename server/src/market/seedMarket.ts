@@ -275,6 +275,111 @@ function stockFundamentals(stock: StockSeed) {
   };
 }
 
+/** Writes a generated series: daily history (excluding today), intraday bars and today's live quote. */
+function persistSeries(id: number, tick: number, data: Series, dates: string[], updatedAt: string): void {
+  const last = dates.length - 1;
+  for (let t = 0; t < last; t++) {
+    const candle = data.daily[t];
+    if (!candle) continue;
+    const c = toPaiseCandle(candle, tick);
+    run(
+      'INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      id,
+      dates[t],
+      c.open,
+      c.high,
+      c.low,
+      c.close,
+      c.volume,
+    );
+  }
+  for (const bars of data.intraday.values()) {
+    for (const bar of bars) {
+      const c = toPaiseCandle(bar, tick);
+      run(
+        'INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        id,
+        bar.ts,
+        c.open,
+        c.high,
+        c.low,
+        c.close,
+        c.volume,
+      );
+    }
+  }
+  const todayCandle = toPaiseCandle(data.daily[last]!, tick);
+  const prev = data.daily[last - 1];
+  const prevClose = prev ? toPaiseCandle(prev, tick).close : todayCandle.open;
+  const avgPrice = (todayCandle.open + todayCandle.close) / 2 / 100;
+  run(
+    `INSERT INTO quotes (security_id, last_price, prev_close, open, high, low, volume, turnover, trading_date, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    todayCandle.close,
+    prevClose,
+    todayCandle.open,
+    todayCandle.high,
+    todayCandle.low,
+    todayCandle.volume,
+    Math.round(todayCandle.volume * avgPrice * 100),
+    dates[last],
+    updatedAt,
+  );
+}
+
+export interface SimulatedStockSpec {
+  symbol: string;
+  name: string;
+  sector: string;
+  industry: string;
+  description: string;
+  /** Price today, in rupees. */
+  price: number;
+  volatility: number;
+  beta: number;
+  avgVolume: number;
+  listingDate: string;
+  fundamentals: Record<string, unknown>;
+}
+
+/**
+ * Adds one stock with simulated history from its listing date until today (used for recently listed
+ * IPOs). Returns the new security id and the opening price of its first trading day in paise.
+ */
+export function addSimulatedStock(spec: SimulatedStockSpec, seed = 1234): { securityId: number; listingOpen: number } {
+  const now = nowMs();
+  const today = istDate(now);
+  const dates: string[] = [];
+  for (let date = spec.listingDate; date < today; date = addDays(date, 1)) if (!isWeekend(date)) dates.push(date);
+  dates.push(today);
+  const rng = createRng(hashString(`market:${spec.symbol}`) ^ seed);
+  const marketReturns = dates.map(() => MARKET_DAILY_DRIFT + gaussian(rng) * MARKET_DAILY_VOL);
+  const intradayDates = new Set(dates.slice(-3));
+  const todayBars = Math.min(BARS_PER_DAY, Math.floor((now - istDayStart(today)) / BAR_MS) + 1);
+  const data = generatePrimarySeries(spec, dates, marketReturns, intradayDates, todayBars, seed);
+  const tick = tickSizeFor(spec.price);
+  return transaction(() => {
+    const securityId = insertSecurity({
+      symbol: spec.symbol,
+      name: spec.name,
+      security_type: 'STOCK',
+      exchange: 'NSE',
+      sector: spec.sector,
+      industry: spec.industry,
+      description: spec.description,
+      ...spec.fundamentals,
+      tick_size: tick,
+      circuit_pct: 20,
+      volatility: spec.volatility,
+      avg_volume: spec.avgVolume,
+      listing_date: spec.listingDate,
+    });
+    persistSeries(securityId, tick, data, dates, nowIso());
+    return { securityId, listingOpen: toPaiseCandle(data.daily[0]!, tick).open };
+  });
+}
+
 /** Populates securities, indices, five years of daily history, recent intraday bars and live quotes. */
 export function seedMarket(options: SeedOptions = {}): void {
   if (get<{ n: number }>('SELECT COUNT(*) AS n FROM securities')!.n > 0) return;
@@ -409,56 +514,7 @@ export function seedMarket(options: SeedOptions = {}): void {
 
     const updatedAt = nowIso();
     for (const [symbol, data] of series) {
-      const id = ids.get(symbol)!;
-      const tick = ticks.get(symbol)!;
-      for (let t = 0; t < dates.length - 1; t++) {
-        const candle = data.daily[t];
-        if (!candle) continue;
-        const c = toPaiseCandle(candle, tick);
-        run(
-          'INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          id,
-          dates[t],
-          c.open,
-          c.high,
-          c.low,
-          c.close,
-          c.volume,
-        );
-      }
-      for (const bars of data.intraday.values()) {
-        for (const bar of bars) {
-          const c = toPaiseCandle(bar, tick);
-          run(
-            'INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            id,
-            bar.ts,
-            c.open,
-            c.high,
-            c.low,
-            c.close,
-            c.volume,
-          );
-        }
-      }
-      const todayCandle = toPaiseCandle(data.daily[dates.length - 1]!, tick);
-      const prev = data.daily[dates.length - 2];
-      const prevClose = prev ? toPaiseCandle(prev, tick).close : todayCandle.open;
-      const avgPrice = (todayCandle.open + todayCandle.close) / 2 / 100;
-      run(
-        `INSERT INTO quotes (security_id, last_price, prev_close, open, high, low, volume, turnover, trading_date, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id,
-        todayCandle.close,
-        prevClose,
-        todayCandle.open,
-        todayCandle.high,
-        todayCandle.low,
-        todayCandle.volume,
-        Math.round(todayCandle.volume * avgPrice * 100),
-        today,
-        updatedAt,
-      );
+      persistSeries(ids.get(symbol)!, ticks.get(symbol)!, data, dates, updatedAt);
     }
     run(
       `INSERT INTO settings (key, value, updated_at) VALUES ('state:tradingDate', ?, ?)

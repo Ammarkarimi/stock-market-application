@@ -2,16 +2,20 @@ import { createApp } from './app.js';
 import { registerMarketListeners } from './bootstrap.js';
 import { config } from './config.js';
 import { closeDatabase, db } from './db/index.js';
+import { startScheduler, stopScheduler } from './jobs/scheduler.js';
 import { initMarket, startSimulation, stopSimulation } from './market/engine.js';
+import { seedIpos } from './market/seedIpos.js';
 import { seedMarket } from './market/seedMarket.js';
 
 function main() {
   db();
   console.log('Preparing market data...');
   seedMarket();
+  seedIpos();
   initMarket();
   registerMarketListeners();
   if (config.simulationEnabled) startSimulation();
+  startScheduler();
 
   const app = createApp();
   const server = app.listen(config.port, () => {
@@ -21,6 +25,7 @@ function main() {
   const shutdown = () => {
     console.log('Shutting down...');
     stopSimulation();
+    stopScheduler();
     server.close(() => {
       closeDatabase();
       process.exit(0);

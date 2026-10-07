@@ -12,6 +12,7 @@ import { requestLogger } from './middleware/requestLogger.js';
 import alertsRoutes from './routes/alerts.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import fundsRoutes from './routes/funds.routes.js';
+import iposRoutes from './routes/ipos.routes.js';
 import marketRoutes from './routes/market.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import ordersRoutes from './routes/orders.routes.js';
@@ -75,6 +76,7 @@ export function createApp() {
   api.use('/watchlists', requireAuth, watchlistsRoutes);
   api.use('/alerts', requireAuth, alertsRoutes);
   api.use('/notifications', requireAuth, notificationsRoutes);
+  api.use('/ipos', requireAuth, iposRoutes);
   api.use(notFoundHandler);
 
   app.use('/api', api);
