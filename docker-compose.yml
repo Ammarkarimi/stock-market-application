@@ -1,0 +1,17 @@
+services:
+  stocksphere:
+    build: .
+    image: stocksphere
+    ports:
+      - '4000:4000'
+    environment:
+      # Demo accounts have published passwords: remove this line for anything other than a local demo.
+      SEED_DEMO_DATA: 'true'
+      # Plain HTTP on localhost. Set to true (the default in production) when serving over HTTPS.
+      COOKIE_SECURE: 'false'
+    volumes:
+      - stocksphere-data:/data
+    restart: unless-stopped
+
+volumes:
+  stocksphere-data:
