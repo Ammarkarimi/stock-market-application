@@ -74,12 +74,12 @@ export function OrderTicket({ request, onClose }: { request: TicketRequest; onCl
   const qty = Number.parseInt(quantity, 10);
   const price = Number.parseFloat(limitPrice);
   const inputValid = Number.isInteger(qty) && qty > 0 && (orderType === 'MARKET' || (Number.isFinite(price) && price > 0));
-  const previewInput = useDebounced(
-    useMemo(
-      () => ({ symbol: request.symbol, side, orderType, quantity: qty, limitPrice: orderType === 'LIMIT' ? price : null, validity: orderType === 'LIMIT' ? validity : 'DAY' }),
-      [request.symbol, side, orderType, qty, price, validity],
-    ),
+  const currentInput = useMemo(
+    () => ({ symbol: request.symbol, side, orderType, quantity: qty, limitPrice: orderType === 'LIMIT' ? price : null, validity: orderType === 'LIMIT' ? validity : 'DAY' }),
+    [request.symbol, side, orderType, qty, price, validity],
   );
+  // The preview, and the order placed from it, trail typing by the debounce delay.
+  const previewInput = useDebounced(currentInput);
 
   const preview = useQuery({
     queryKey: ['order-preview', previewInput],
@@ -110,7 +110,9 @@ export function OrderTicket({ request, onClose }: { request: TicketRequest; onCl
   const maxBuy = funds && lastPrice ? Math.floor(funds.availableBalance / ((orderType === 'LIMIT' && price) || lastPrice) / 1.0015) : 0;
   const previewError = preview.error instanceof ApiError ? preview.error.message : null;
   const issues = preview.data?.issues ?? [];
-  const canReview = inputValid && !!preview.data && preview.data.canPlace && !preview.isFetching;
+  // Review only once the preview matches what is on screen, so the confirmed order is exactly what was entered.
+  const previewCurrent = previewInput === currentInput && !preview.isPlaceholderData;
+  const canReview = inputValid && previewCurrent && !!preview.data && preview.data.canPlace && !preview.isFetching;
   const sideColor = side === 'BUY' ? 'text-gain' : 'text-loss';
 
   const title = (
