@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { paginationQuery, parse, symbolParam } from '../lib/validation.js';
+import { currentUser } from '../middleware/auth.js';
 import { getQuoteBySymbol, toQuoteDto } from '../market/quoteStore.js';
+import { listAlerts } from '../services/alert.service.js';
 import {
   getIndexConstituents,
   getPriceHistory,
@@ -12,6 +14,8 @@ import {
   searchSecurities,
   SECURITY_TYPES,
 } from '../services/market.service.js';
+import { getPosition } from '../services/portfolio.service.js';
+import { watchlistsContaining } from '../services/watchlist.service.js';
 
 const router = Router();
 
@@ -57,7 +61,15 @@ router.get('/', (req, res) => {
 
 router.get('/:symbol', (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
-  res.json(getSecurityDetail(symbol));
+  const detail = getSecurityDetail(symbol);
+  const user = currentUser(req);
+  const securityId = getQuoteBySymbol(symbol)!.securityId;
+  res.json({
+    ...detail,
+    position: getPosition(user.id, securityId),
+    watchlists: watchlistsContaining(user.id, securityId),
+    alerts: listAlerts(user.id, { symbol, status: 'ACTIVE' }),
+  });
 });
 
 router.get('/:symbol/history', (req, res) => {

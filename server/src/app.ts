@@ -9,9 +9,11 @@ import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import alertsRoutes from './routes/alerts.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import fundsRoutes from './routes/funds.routes.js';
 import marketRoutes from './routes/market.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
 import ordersRoutes from './routes/orders.routes.js';
 import portfolioRoutes from './routes/portfolio.routes.js';
 import profileRoutes from './routes/profile.routes.js';
@@ -19,6 +21,7 @@ import securitiesRoutes from './routes/securities.routes.js';
 import statementsRoutes from './routes/statements.routes.js';
 import streamRoutes from './routes/stream.routes.js';
 import tradesRoutes from './routes/trades.routes.js';
+import watchlistsRoutes from './routes/watchlists.routes.js';
 
 export function createApp() {
   const app = express();
@@ -69,6 +72,9 @@ export function createApp() {
   api.use('/portfolio', requireAuth, portfolioRoutes);
   api.use('/funds', requireAuth, fundsRoutes);
   api.use('/statements', requireAuth, statementsRoutes);
+  api.use('/watchlists', requireAuth, watchlistsRoutes);
+  api.use('/alerts', requireAuth, alertsRoutes);
+  api.use('/notifications', requireAuth, notificationsRoutes);
   api.use(notFoundHandler);
 
   app.use('/api', api);
