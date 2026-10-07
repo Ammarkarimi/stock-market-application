@@ -17,7 +17,7 @@ interface TabsProps<T extends string> {
 /** Underlined tab bar for switching page sections. */
 export function Tabs<T extends string>({ items, value, onChange, className }: TabsProps<T>) {
   return (
-    <div role="tablist" className={cn('flex gap-1 overflow-x-auto border-b border-border scrollbar-thin', className)}>
+    <div role="tablist" className={cn('flex min-w-0 gap-1 overflow-x-auto border-b border-border scrollbar-thin', className)}>
       {items.map((item) => {
         const active = item.value === value;
         return (

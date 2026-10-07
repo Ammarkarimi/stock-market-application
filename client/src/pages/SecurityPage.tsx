@@ -355,7 +355,7 @@ export default function SecurityPage() {
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary/80" /> Revenue</span>
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-gain" /> Net profit</span>
             </div>
-            <div className="mt-4 overflow-x-auto">
+            <div className="relative mt-4 overflow-x-auto">
               <table className="num w-full text-sm">
                 <thead>
                   <tr className="text-xs text-muted">
