@@ -191,7 +191,7 @@ export async function seedDemoData(): Promise<void> {
       quantumApp = historicalApply(demo, 'QUANTUMMED', 1, 47);
     }],
     [44, 18, 0, () => historicalAllotment(quantumApp, false)],
-    [40, 11, 0, () => void deposit(priya, toPaise(150_000), 'UPI', actorFor(priya))],
+    [40, 11, 0, () => void deposit(priya, toPaise(250_000), 'UPI', actorFor(priya))],
     [38, 11, 30, (date) => buyAll(priya, date, [['ETERNAL', 300], ['NIFTYBEES', 200], ['TRENT', 5]])],
     [30, 15, 0, (date) => trade(rahul, date, 'TCS', 'SELL', 5)],
     [23, 11, 15, () => {
@@ -217,6 +217,13 @@ export async function seedDemoData(): Promise<void> {
       );
       audit({ actor: actorFor(demo), action: 'ALERT_CREATED', entityType: 'ALERT', entityId: alertId, details: { symbol: 'INFY', condition: 'ABOVE' } });
     }],
+    [14, 9, 40, () => void deposit(rahul, toPaise(100_000), 'UPI', actorFor(rahul))],
+    [12, 10, 15, (date) => trade(rahul, date, 'SBIN', 'BUY', 60)],
+    [9, 13, 30, (date) => trade(priya, date, 'ETERNAL', 'SELL', 100)],
+    [8, 11, 0, (date) => trade(rahul, date, 'TATASTEEL', 'BUY', 250)],
+    [6, 14, 20, (date) => trade(priya, date, 'ITC', 'BUY', 120)],
+    [4, 10, 45, (date) => trade(rahul, date, 'INFY', 'SELL', 10)],
+    [3, 15, 30, (date) => trade(priya, date, 'GOLDBEES', 'BUY', 200)],
     [10, 14, 5, () => {
       run("UPDATE price_alerts SET status = 'TRIGGERED', triggered_price = ?, triggered_at = ?, updated_at = ? WHERE id = ?", alertTarget + 500, nowIso(), nowIso(), alertId);
       notify(demo, 'PRICE_ALERT', 'INFY price alert', 'INFY has risen above your target price. Note: Book partial profits', '/stocks/INFY');

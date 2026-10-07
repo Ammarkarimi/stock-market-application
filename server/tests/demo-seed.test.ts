@@ -25,6 +25,11 @@ describe('demo data', () => {
     expect((await client.get('/api/watchlists')).body.watchlists).toHaveLength(3);
   });
 
+  it('seeds only orders that were accepted', () => {
+    const rejected = all<{ user_id: number; status_reason: string }>("SELECT user_id, status_reason FROM orders WHERE status = 'REJECTED'");
+    expect(rejected).toEqual([]);
+  });
+
   it('keeps every ledger balance consistent with the account balance', () => {
     for (const { user_id, cash_balance } of all<{ user_id: number; cash_balance: number }>('SELECT * FROM accounts')) {
       const last = get<{ balance_after: number }>('SELECT balance_after FROM ledger_entries WHERE user_id = ? ORDER BY id DESC LIMIT 1', user_id);
