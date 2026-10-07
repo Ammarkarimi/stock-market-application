@@ -21,6 +21,7 @@ data/
 coverage/
 playwright-report/
 test-results/
+blob-report/
 *.log
 .DS_Store
 .vscode/

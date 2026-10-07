@@ -16,6 +16,7 @@ import { api, ApiError, errorMessage } from '@/lib/api';
 import { formatDate, formatDateTime, relativeTime } from '@/lib/format';
 import { keys } from '@/lib/queryClient';
 import type { ActivityEntry, NotificationPreferences, Page, Profile, Session } from '@/lib/types';
+import { markLocalAction } from '@/live/localActions';
 import { categoryLabel } from './notificationMeta';
 
 type Tab = 'personal' | 'bank' | 'security' | 'notifications' | 'activity';
@@ -66,6 +67,7 @@ function BankAccountForm({ profile }: { profile: Profile }) {
   const [form, setForm] = useState({ accountHolder: bank?.accountHolder ?? profile.user.fullName, accountNumber: '', confirmAccountNumber: '', ifsc: bank?.ifsc ?? '', bankName: bank?.bankName ?? '' });
   const save = useMutation({
     mutationFn: () => api.put('/profile/bank-account', { accountHolder: form.accountHolder, accountNumber: form.accountNumber, ifsc: form.ifsc, bankName: form.bankName }),
+    onMutate: () => markLocalAction('SECURITY'),
     onSuccess: () => {
       toast.success('Bank account saved');
       setForm((f) => ({ ...f, accountNumber: '', confirmAccountNumber: '' }));
@@ -117,6 +119,7 @@ function ChangePassword() {
   const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const change = useMutation({
     mutationFn: () => api.post<{ revokedSessions: number }>('/profile/password', form),
+    onMutate: () => markLocalAction('SECURITY'),
     onSuccess: ({ revokedSessions }) => {
       toast.success('Password changed', { description: revokedSessions ? `${revokedSessions} other session${revokedSessions === 1 ? '' : 's'} signed out.` : undefined });
       setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -145,6 +148,7 @@ function TransactionPin() {
   const [form, setForm] = useState({ password: '', pin: '', confirmPin: '' });
   const save = useMutation({
     mutationFn: () => api.post('/profile/pin', form),
+    onMutate: () => markLocalAction('SECURITY'),
     onSuccess: () => {
       toast.success(user?.hasPin ? 'Transaction PIN changed' : 'Transaction PIN set');
       setForm({ password: '', pin: '', confirmPin: '' });
