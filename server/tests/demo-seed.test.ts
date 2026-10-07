@@ -34,6 +34,15 @@ describe('demo data', () => {
     }
   });
 
+  it('records history in chronological order', () => {
+    for (const table of ['ledger_entries', 'audit_logs', 'notifications', 'orders']) {
+      const rows = all<{ created_at: string }>(`SELECT created_at FROM ${table} ORDER BY id`);
+      for (let i = 1; i < rows.length; i++) {
+        expect(rows[i]!.created_at >= rows[i - 1]!.created_at, `${table} row ${i} goes back in time`).toBe(true);
+      }
+    }
+  });
+
   it('leaves a valid audit chain and a working admin account', async () => {
     expect(verifyAuditChain().valid).toBe(true);
     const admin = new TestClient();

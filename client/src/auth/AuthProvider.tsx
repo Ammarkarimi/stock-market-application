@@ -12,6 +12,11 @@ interface AuthResponse {
   csrfToken: string;
 }
 
+interface MeResponse {
+  user: User | null;
+  csrfToken: string | null;
+}
+
 export interface RegisterInput {
   fullName: string;
   email: string;
@@ -58,11 +63,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     api
-      .get<AuthResponse>('/auth/me')
-      .then(applySession)
-      .catch(() => {
-        setStatus('anonymous');
-      });
+      .get<MeResponse>('/auth/me')
+      .then((me) => (me.user && me.csrfToken ? applySession({ user: me.user, csrfToken: me.csrfToken }) : setStatus('anonymous')))
+      .catch(() => setStatus('anonymous'));
   }, [applySession]);
 
   const endSession = useCallback(
@@ -102,8 +105,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession]);
 
   const refreshUser = useCallback(async () => {
-    applySession(await api.get<AuthResponse>('/auth/me'));
-  }, [applySession]);
+    const me = await api.get<MeResponse>('/auth/me');
+    if (me.user && me.csrfToken) applySession({ user: me.user, csrfToken: me.csrfToken });
+    else endSession('Your session has expired. Please sign in again.');
+  }, [applySession, endSession]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, status, login, register, logout, endSession, refreshUser, updateUser: setUser }),

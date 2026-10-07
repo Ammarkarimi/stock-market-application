@@ -47,7 +47,7 @@ describe('user management', () => {
     expect((await admin.post(`/api/admin/users/${user.id}/status`, { status: 'SUSPENDED', reason: 'no' })).status).toBe(400);
     const suspended = await admin.post(`/api/admin/users/${user.id}/status`, { status: 'SUSPENDED', reason: 'Suspicious activity' });
     expect(suspended.body.user.status).toBe('SUSPENDED');
-    expect((await client.get('/api/auth/me')).status).toBe(401);
+    expect((await client.get('/api/auth/me')).body.user).toBeNull();
     expect((await new TestClient().post('/api/auth/login', { email, password: DEFAULT_PASSWORD })).status).toBe(403);
 
     const detail = await admin.get(`/api/admin/users/${user.id}`);

@@ -106,11 +106,13 @@ export function addDaysISO(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const ACRONYMS = new Set(['ipo', 'nii', 'qib', 'etf', 'reit', 'invit', 'pin', 'upi', 'csv', 'ioc', 'pan', 'ifsc', 'nse', 'bse']);
+
 export function titleCase(value: string): string {
   return value
     .toLowerCase()
     .split(/[_\s]+/)
-    .map((word) => (word ? word[0]!.toUpperCase() + word.slice(1) : word))
+    .map((word) => (ACRONYMS.has(word) ? word.toUpperCase() : word ? word[0]!.toUpperCase() + word.slice(1) : word))
     .join(' ');
 }
 

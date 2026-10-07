@@ -38,7 +38,8 @@ describe('registration and login', () => {
   it('logs out and invalidates the session', async () => {
     const { client } = await registerClient();
     expect((await client.post('/api/auth/logout')).status).toBe(200);
-    expect((await client.get('/api/auth/me')).status).toBe(401);
+    expect((await client.get('/api/auth/me')).body.user).toBeNull();
+    expect((await client.get('/api/portfolio')).status).toBe(401);
   });
 
   it('uses a generic error for bad credentials and locks after five failures', async () => {
@@ -107,8 +108,8 @@ describe('sessions and CSRF', () => {
 
     const revoke = await client.post('/api/auth/sessions/revoke-others');
     expect(revoke.body.revoked).toBe(1);
-    expect((await second.get('/api/auth/me')).status).toBe(401);
-    expect((await client.get('/api/auth/me')).status).toBe(200);
+    expect((await second.get('/api/auth/me')).body.user).toBeNull();
+    expect((await client.get('/api/auth/me')).body.user).not.toBeNull();
   });
 
   it('signs out other sessions when the password changes', async () => {
@@ -130,8 +131,8 @@ describe('sessions and CSRF', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.revokedSessions).toBe(1);
-    expect((await other.get('/api/auth/me')).status).toBe(401);
-    expect((await client.get('/api/auth/me')).status).toBe(200);
+    expect((await other.get('/api/auth/me')).body.user).toBeNull();
+    expect((await client.get('/api/auth/me')).body.user).not.toBeNull();
   });
 });
 

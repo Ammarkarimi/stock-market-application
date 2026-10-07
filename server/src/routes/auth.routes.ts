@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod';
-import { notFound, unauthorized } from '../lib/errors.js';
+import { notFound } from '../lib/errors.js';
 import { parse, passwordSchema } from '../lib/validation.js';
 import { clearSessionCookie, currentUser, requireAuth, sessionCookieOptions } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimit.js';
@@ -65,8 +65,12 @@ router.post('/logout', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Anonymous visitors get { user: null } rather than a 401 so a normal page load doesn't log an error.
 router.get('/me', (req, res) => {
-  if (!req.auth) throw unauthorized('Not signed in');
+  if (!req.auth) {
+    res.json({ user: null, csrfToken: null });
+    return;
+  }
   res.json({ user: toUserDto(req.auth.user), csrfToken: req.auth.session.csrf_token });
 });
 

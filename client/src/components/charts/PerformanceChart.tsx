@@ -51,13 +51,19 @@ export function PerformanceChart({ points, showBenchmark = false, height = 260, 
     const invested = chart.addSeries(LineSeries, { color: muted, lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     invested.setData(data.map((p) => ({ time: p.date, value: p.invested })));
 
-    const firstWithBenchmark = data.find((p) => p.benchmark && p.value > 0);
-    if (showBenchmark && firstWithBenchmark) {
-      const scale = firstWithBenchmark.value / firstWithBenchmark.benchmark!;
+    if (showBenchmark) {
+      // "What if": every change in invested capital buys (or sells) NIFTY 50 units on the same day.
+      let units = 0;
+      let previousInvested = 0;
+      const benchmarkData: { time: string; value: number }[] = [];
+      for (const p of data) {
+        if (!p.benchmark) continue;
+        units += (p.invested - previousInvested) / p.benchmark;
+        previousInvested = p.invested;
+        benchmarkData.push({ time: p.date, value: Math.max(0, units * p.benchmark) });
+      }
       const benchmark = chart.addSeries(LineSeries, { color: benchmarkColor, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-      benchmark.setData(
-        data.filter((p) => p.benchmark && p.date >= firstWithBenchmark.date).map((p) => ({ time: p.date, value: p.benchmark! * scale })),
-      );
+      benchmark.setData(benchmarkData);
     }
     chart.timeScale().fitContent();
 

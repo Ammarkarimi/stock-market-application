@@ -1,7 +1,7 @@
 import { get, run, transaction } from '../db/index.js';
 import { freezeTime, nowIso, resetTime } from '../lib/clock.js';
 import { hashSecret, referenceCode } from '../lib/crypto.js';
-import { toPaise } from '../lib/money.js';
+import { formatInr, toPaise } from '../lib/money.js';
 import { addWeekdays, istDate, istDayStart } from '../lib/time.js';
 import { getQuoteBySymbol } from '../market/quoteStore.js';
 import { SYSTEM_ACTOR, type Actor } from '../services/actor.js';
@@ -65,15 +65,28 @@ function ipoId(symbol: string): number {
   return get<{ id: number }>('SELECT id FROM ipos WHERE symbol = ?', symbol)!.id;
 }
 
-/** Records an application for an issue that has already completed (seeded as listed). */
-function historicalApplication(userId: number, symbol: string, lots: number, appliedOn: number, allotted: boolean) {
-  const ipo = get<{ id: number; lot_size: number; price_band_high: number; allotment_date: string; listing_date: string; security_id: number; company_name: string }>(
-    'SELECT * FROM ipos WHERE symbol = ?',
-    symbol,
-  )!;
+interface CompletedIpo {
+  id: number;
+  lot_size: number;
+  price_band_high: number;
+  allotment_date: string;
+  listing_date: string;
+  security_id: number;
+  company_name: string;
+}
+
+function completedIpo(symbol: string): CompletedIpo {
+  return get<CompletedIpo>('SELECT * FROM ipos WHERE symbol = ?', symbol)!;
+}
+
+/**
+ * Historical application for an issue that the market seed already listed. Split into the same steps
+ * as the live lifecycle so each step is written at its own point in the timeline.
+ */
+function historicalApply(userId: number, symbol: string, lots: number, weekdaysAgo: number): number {
+  const ipo = completedIpo(symbol);
   const quantity = lots * ipo.lot_size;
-  const amount = quantity * ipo.price_band_high;
-  at(appliedOn, 11, 15);
+  at(weekdaysAgo, 11, 15);
   const appId = Number(
     run(
       `INSERT INTO ipo_applications (ipo_id, user_id, application_no, quantity, bid_price, is_cutoff, blocked_amount, status, created_at, updated_at)
@@ -83,38 +96,44 @@ function historicalApplication(userId: number, symbol: string, lots: number, app
       referenceCode(`IPO-${symbol}`, istDate()),
       quantity,
       ipo.price_band_high,
-      amount,
+      quantity * ipo.price_band_high,
       nowIso(),
       nowIso(),
     ).lastInsertRowid,
   );
   audit({ actor: actorFor(userId), action: 'IPO_APPLIED', entityType: 'IPO_APPLICATION', entityId: appId, details: { ipo: symbol, quantity, cutoff: true } });
+  notify(userId, 'IPO', 'IPO application submitted', `Applied for ${quantity} shares of ${ipo.company_name} at cut-off.`, `/ipo/${ipo.id}`);
+  return appId;
+}
 
+function historicalAllotment(appId: number, allotted: boolean): void {
+  const app = get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', appId)!;
+  const ipo = get<CompletedIpo & { symbol: string }>('SELECT * FROM ipos WHERE id = ?', app.ipo_id)!;
   freezeTime(istDayStart(ipo.allotment_date) + 18 * 3_600_000);
   if (allotted) {
     run(
       `UPDATE ipo_applications SET status = 'ALLOTTED', allotted_quantity = ?, allotment_price = ?, amount_debited = ?, updated_at = ? WHERE id = ?`,
-      quantity,
+      app.quantity,
       ipo.price_band_high,
-      amount,
+      app.blocked_amount,
       nowIso(),
       appId,
     );
-    postLedger(userId, { type: 'IPO_ALLOTMENT', amount: -amount, referenceType: 'IPO_APPLICATION', referenceId: appId, description: `IPO allotment: ${quantity} ${symbol}` });
-    notify(userId, 'IPO', `${ipo.company_name}: shares allotted 🎉`, `You were allotted ${quantity} shares. They will be credited on ${ipo.listing_date}.`, `/ipo/${ipo.id}`);
-    freezeTime(istDayStart(ipo.listing_date) + 9 * 3_600_000);
-    const app = get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', appId)!;
-    creditAllottedShares(app, ipo.security_id, ipo.listing_date);
-    notify(userId, 'IPO', `${ipo.company_name} listed`, `${quantity} ${symbol} shares were credited to your holdings.`, `/stocks/${symbol}`);
+    postLedger(app.user_id, { type: 'IPO_ALLOTMENT', amount: -app.blocked_amount, referenceType: 'IPO_APPLICATION', referenceId: appId, description: `IPO allotment: ${app.quantity} ${ipo.symbol} @ ${formatInr(ipo.price_band_high)} (${app.application_no})` });
+    notify(app.user_id, 'IPO', `${ipo.company_name}: shares allotted 🎉`, `You were allotted ${app.quantity} shares. They will be credited on ${ipo.listing_date}.`, `/ipo/${ipo.id}`);
   } else {
-    run(
-      `UPDATE ipo_applications SET status = 'NOT_ALLOTTED', status_reason = ?, updated_at = ? WHERE id = ?`,
-      'Not selected in the allotment lottery',
-      nowIso(),
-      appId,
-    );
-    notify(userId, 'IPO', `${ipo.company_name}: not allotted`, 'Your application was not selected in the lottery. Blocked funds have been released.', `/ipo/${ipo.id}`);
+    run(`UPDATE ipo_applications SET status = 'NOT_ALLOTTED', status_reason = ?, updated_at = ? WHERE id = ?`, 'Not selected in the allotment lottery', nowIso(), appId);
+    notify(app.user_id, 'IPO', `${ipo.company_name}: not allotted`, 'Your application was not selected in the lottery. Blocked funds have been released.', `/ipo/${ipo.id}`);
   }
+  audit({ actor: SYSTEM_ACTOR, action: 'IPO_ALLOTMENT_RESULT', subjectUserId: app.user_id, entityType: 'IPO_APPLICATION', entityId: appId, details: { ipo: ipo.symbol, allottedQuantity: allotted ? app.quantity : 0 } });
+}
+
+function historicalListingCredit(appId: number): void {
+  const app = get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', appId)!;
+  const ipo = get<CompletedIpo & { symbol: string }>('SELECT * FROM ipos WHERE id = ?', app.ipo_id)!;
+  freezeTime(istDayStart(ipo.listing_date) + 9 * 3_600_000);
+  creditAllottedShares(app, ipo.security_id, ipo.listing_date);
+  notify(app.user_id, 'IPO', `${ipo.company_name} listed`, `${app.quantity} ${ipo.symbol} shares were credited to your holdings.`, `/stocks/${ipo.symbol}`);
 }
 
 function roundTick(symbol: string, paise: number): number {
@@ -129,110 +148,106 @@ function roundTick(symbol: string, paise: number): number {
 export async function seedDemoData(): Promise<void> {
   if (get<{ n: number }>('SELECT COUNT(*) AS n FROM users')!.n > 0) return;
   seedDay = istDate();
+  let adminId = 0;
+  let demo = 0;
+  let rahul = 0;
+  let priya = 0;
+  let karan = 0;
+  let quantumApp = 0;
+  let vistaarApp = 0;
+  let alertId = 0;
+  let alertTarget = 0;
+  const admin = (): Actor => ({ userId: adminId, role: 'ADMIN', ip: '10.0.0.5', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Safari/605.1.15' });
+  const buyAll = (userId: number, date: string, orders: readonly (readonly [string, number])[]) => {
+    for (const [symbol, qty] of orders) trade(userId, date, symbol, 'BUY', qty);
+  };
+
+  // Every user's history is written as one timeline, in time order, so ledgers, notifications and the
+  // audit trail read chronologically. Entries: [weekdays ago, hour, minute, action].
+  const timeline: [number, number, number, (date: string) => void | Promise<void>][] = [
+    [150, 9, 30, async () => {
+      adminId = await createInvestor({ fullName: 'Platform Admin', email: DEMO_ACCOUNTS.admin.email, phone: '9000000001', password: DEMO_ACCOUNTS.admin.password, pin: DEMO_ACCOUNTS.admin.pin, role: 'ADMIN' });
+    }],
+    [150, 10, 0, async () => {
+      demo = await createInvestor({ fullName: 'Aditi Verma', email: DEMO_ACCOUNTS.investor.email, phone: '9876543210', password: DEMO_ACCOUNTS.investor.password, pin: DEMO_ACCOUNTS.investor.pin });
+      run(`UPDATE users SET date_of_birth = '1992-03-14', pan = 'ABCPV1234K', address = '12, Palm Grove Road, Indiranagar, Bengaluru 560038' WHERE id = ?`, demo);
+      saveBankAccount(demo, { accountHolder: 'Aditi Verma', accountNumber: '50100234567890', ifsc: 'HDFC0001234', bankName: 'HDFC Bank' }, actorFor(demo));
+    }],
+    [150, 10, 20, () => void deposit(demo, toPaise(600_000), 'NETBANKING', actorFor(demo))],
+    [145, 10, 30, (date) => buyAll(demo, date, [['RELIANCE', 40], ['TCS', 15], ['HDFCBANK', 80], ['ITC', 250], ['INFY', 40]])],
+    [120, 16, 0, async () => {
+      rahul = await createInvestor({ fullName: 'Rahul Mehta', email: 'rahul@example.com', phone: '9812345678', password: 'Rahul@12345', pin: '4826' });
+    }],
+    [110, 9, 45, () => void deposit(demo, toPaise(300_000), 'UPI', actorFor(demo))],
+    [110, 11, 0, (date) => buyAll(demo, date, [['NIFTYBEES', 300], ['GOLDBEES', 500], ['BHARTIARTL', 30], ['SUNPHARMA', 25]])],
+    [90, 9, 50, () => void deposit(rahul, toPaise(200_000), 'NETBANKING', actorFor(rahul))],
+    [85, 10, 0, (date) => buyAll(rahul, date, [['TCS', 20], ['INFY', 30], ['HDFCBANK', 40]])],
+    [80, 13, 0, (date) => buyAll(demo, date, [['TITAN', 10], ['LT', 15]])],
+    [60, 14, 10, (date) => trade(demo, date, 'INFY', 'SELL', 20)],
+    [50, 12, 0, async () => {
+      priya = await createInvestor({ fullName: 'Priya Nair', email: 'priya@example.com', phone: '9823456789', password: 'Priya@12345', pin: '5937' });
+    }],
+    [47, 11, 15, () => {
+      quantumApp = historicalApply(demo, 'QUANTUMMED', 1, 47);
+    }],
+    [44, 18, 0, () => historicalAllotment(quantumApp, false)],
+    [40, 11, 0, () => void deposit(priya, toPaise(150_000), 'UPI', actorFor(priya))],
+    [38, 11, 30, (date) => buyAll(priya, date, [['ETERNAL', 300], ['NIFTYBEES', 200], ['TRENT', 5]])],
+    [30, 15, 0, (date) => trade(rahul, date, 'TCS', 'SELL', 5)],
+    [23, 11, 15, () => {
+      vistaarApp = historicalApply(demo, 'VISTAARLOG', 1, 23);
+    }],
+    [20, 10, 0, () => void deposit(demo, toPaise(200_000), 'UPI', actorFor(demo))],
+    [20, 10, 30, (date) => buyAll(demo, date, [['BEL', 150], ['EMBASSY', 100]])],
+    [20, 18, 0, () => historicalAllotment(vistaarApp, true)],
+    [18, 9, 0, () => historicalListingCredit(vistaarApp)],
+    [15, 12, 0, () => {
+      // A price alert that has already fired.
+      alertTarget = roundTick('INFY', closeOn('INFY', addWeekdays(seedDay, -10)) - 500);
+      alertId = Number(
+        run(
+          `INSERT INTO price_alerts (user_id, security_id, condition, target_price, status, note, created_at, updated_at)
+           VALUES (?, ?, 'ABOVE', ?, 'ACTIVE', 'Book partial profits', ?, ?)`,
+          demo,
+          getQuoteBySymbol('INFY')!.securityId,
+          alertTarget,
+          nowIso(),
+          nowIso(),
+        ).lastInsertRowid,
+      );
+      audit({ actor: actorFor(demo), action: 'ALERT_CREATED', entityType: 'ALERT', entityId: alertId, details: { symbol: 'INFY', condition: 'ABOVE' } });
+    }],
+    [10, 14, 5, () => {
+      run("UPDATE price_alerts SET status = 'TRIGGERED', triggered_price = ?, triggered_at = ?, updated_at = ? WHERE id = ?", alertTarget + 500, nowIso(), nowIso(), alertId);
+      notify(demo, 'PRICE_ALERT', 'INFY price alert', 'INFY has risen above your target price. Note: Book partial profits', '/stocks/INFY');
+      audit({ actor: SYSTEM_ACTOR, action: 'ALERT_TRIGGERED', subjectUserId: demo, entityType: 'ALERT', entityId: alertId, details: { symbol: 'INFY' } });
+    }],
+    [7, 16, 0, () => void sendAnnouncement('Price alerts are live', 'Set above/below alerts on any stock and get notified the moment your price is hit.', '/alerts', admin())],
+    [5, 11, 0, async () => {
+      await applyForIpo(demo, ipoId('ORBITAERO'), { lots: 1, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
+    }],
+    [5, 15, 0, async () => {
+      karan = await createInvestor({ fullName: 'Karan Singh', email: 'karan@example.com', phone: '9834567890', password: 'Karan@12345', pin: '6048' });
+    }],
+    [3, 12, 0, async () => {
+      await applyForIpo(demo, ipoId('KAVERIAGRO'), { lots: 2, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
+    }],
+    [2, 11, 0, () => void setUserStatus(karan, 'SUSPENDED', 'KYC documents could not be verified', admin())],
+    [1, 11, 40, (date) => trade(demo, date, 'ICICIBANK', 'BUY', 30)],
+    [1, 18, 0, () => void allotIpo(ipoId('ORBITAERO'), SYSTEM_ACTOR, () => 0)],
+  ];
+  timeline.sort((a, b) => b[0] - a[0] || a[1] * 60 + a[2] - (b[1] * 60 + b[2]));
+
   try {
-    // ---- Accounts --------------------------------------------------------------------------------
-    at(150, 9, 30);
-    const adminId = await createInvestor({ fullName: 'Platform Admin', email: DEMO_ACCOUNTS.admin.email, phone: '9000000001', password: DEMO_ACCOUNTS.admin.password, pin: DEMO_ACCOUNTS.admin.pin, role: 'ADMIN' });
-    const admin: Actor = { userId: adminId, role: 'ADMIN', ip: '10.0.0.5', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Safari/605.1.15' };
-
-    at(150, 10);
-    const demo = await createInvestor({ fullName: 'Aditi Verma', email: DEMO_ACCOUNTS.investor.email, phone: '9876543210', password: DEMO_ACCOUNTS.investor.password, pin: DEMO_ACCOUNTS.investor.pin });
-    run(
-      `UPDATE users SET date_of_birth = '1992-03-14', pan = 'ABCPV1234K', address = '12, Palm Grove Road, Indiranagar, Bengaluru 560038' WHERE id = ?`,
-      demo,
-    );
-    saveBankAccount(demo, { accountHolder: 'Aditi Verma', accountNumber: '50100234567890', ifsc: 'HDFC0001234', bankName: 'HDFC Bank' }, actorFor(demo));
-
-    const rahul = await createInvestor({ fullName: 'Rahul Mehta', email: 'rahul@example.com', phone: '9812345678', password: 'Rahul@12345', pin: '4826' });
-    const priya = await createInvestor({ fullName: 'Priya Nair', email: 'priya@example.com', phone: '9823456789', password: 'Priya@12345', pin: '5937' });
-
-    // ---- Demo investor history -------------------------------------------------------------------
-    at(150, 10, 20);
-    deposit(demo, toPaise(600_000), 'NETBANKING', actorFor(demo));
-    let date = at(145, 10, 30);
-    for (const [symbol, qty] of [['RELIANCE', 40], ['TCS', 15], ['HDFCBANK', 80], ['ITC', 250], ['INFY', 40]] as const) trade(demo, date, symbol, 'BUY', qty);
-
-    at(110, 9, 45);
-    deposit(demo, toPaise(300_000), 'UPI', actorFor(demo));
-    date = at(110, 11);
-    for (const [symbol, qty] of [['NIFTYBEES', 300], ['GOLDBEES', 500], ['BHARTIARTL', 30], ['SUNPHARMA', 25]] as const) trade(demo, date, symbol, 'BUY', qty);
-
-    date = at(80, 13);
-    trade(demo, date, 'TITAN', 'BUY', 10);
-    trade(demo, date, 'LT', 'BUY', 15);
-
-    date = at(60, 14, 10);
-    trade(demo, date, 'INFY', 'SELL', 20);
-
-    historicalApplication(demo, 'QUANTUMMED', 1, 47, false);
-    historicalApplication(demo, 'VISTAARLOG', 1, 23, true);
-
-    at(20, 10);
-    deposit(demo, toPaise(200_000), 'UPI', actorFor(demo));
-    date = at(20, 10, 30);
-    trade(demo, date, 'BEL', 'BUY', 150);
-    trade(demo, date, 'EMBASSY', 'BUY', 100);
-
-    // A price alert that already fired.
-    at(15, 12);
-    const infy = getQuoteBySymbol('INFY')!;
-    const alertTarget = roundTick('INFY', closeOn('INFY', addWeekdays(seedDay, -10)) - 500);
-    const alertId = Number(
-      run(
-        `INSERT INTO price_alerts (user_id, security_id, condition, target_price, status, note, created_at, updated_at)
-         VALUES (?, ?, 'ABOVE', ?, 'ACTIVE', 'Book partial profits', ?, ?)`,
-        demo,
-        infy.securityId,
-        alertTarget,
-        nowIso(),
-        nowIso(),
-      ).lastInsertRowid,
-    );
-    at(10, 14, 5);
-    run("UPDATE price_alerts SET status = 'TRIGGERED', triggered_price = ?, triggered_at = ?, updated_at = ? WHERE id = ?", alertTarget + 500, nowIso(), nowIso(), alertId);
-    notify(demo, 'PRICE_ALERT', 'INFY price alert', 'INFY has risen above your target price. Note: Book partial profits', '/stocks/INFY');
-
-    at(7, 16);
-    sendAnnouncement('Price alerts are live', 'Set above/below alerts on any stock and get notified the moment your price is hit.', '/alerts', admin);
-
-    // Current IPO pipeline: an allotted application and a pending one.
-    at(5, 11);
-    await applyForIpo(demo, ipoId('ORBITAERO'), { lots: 1, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
-    at(3, 12);
-    await applyForIpo(demo, ipoId('KAVERIAGRO'), { lots: 2, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
-    date = at(1, 11, 40);
-    trade(demo, date, 'ICICIBANK', 'BUY', 30);
-    at(1, 18);
-    allotIpo(ipoId('ORBITAERO'), SYSTEM_ACTOR, () => 0);
-
-    // ---- Other investors ---------------------------------------------------------------------------
-    at(90, 9, 50);
-    deposit(rahul, toPaise(200_000), 'NETBANKING', actorFor(rahul));
-    date = at(85, 10);
-    trade(rahul, date, 'TCS', 'BUY', 20);
-    trade(rahul, date, 'INFY', 'BUY', 30);
-    trade(rahul, date, 'HDFCBANK', 'BUY', 40);
-    date = at(30, 15);
-    trade(rahul, date, 'TCS', 'SELL', 5);
-
-    at(40, 11);
-    deposit(priya, toPaise(150_000), 'UPI', actorFor(priya));
-    date = at(38, 11, 30);
-    trade(priya, date, 'ETERNAL', 'BUY', 300);
-    trade(priya, date, 'NIFTYBEES', 'BUY', 200);
-    trade(priya, date, 'TRENT', 'BUY', 5);
-
-    at(5, 15);
-    const karan = await createInvestor({ fullName: 'Karan Singh', email: 'karan@example.com', phone: '9834567890', password: 'Karan@12345', pin: '6048' });
-    at(2, 11);
-    setUserStatus(karan, 'SUSPENDED', 'KYC documents could not be verified', admin);
+    for (const [weekdaysAgo, hour, minute, action] of timeline) {
+      const date = at(weekdaysAgo, hour, minute);
+      await action(date);
+    }
   } finally {
     resetTime();
   }
 
   // ---- Today: open orders, watchlists and alerts at live prices ---------------------------------------
-  const demo = get<{ id: number }>('SELECT id FROM users WHERE email = ?', DEMO_ACCOUNTS.investor.email)!.id;
-  const priya = get<{ id: number }>('SELECT id FROM users WHERE email = ?', 'priya@example.com')!.id;
   const actor = actorFor(demo);
   transaction(() => {
     const sbin = getQuoteBySymbol('SBIN')!;

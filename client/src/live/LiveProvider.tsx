@@ -27,7 +27,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     source.onerror = () => {
       setStreamConnected(false);
       // The browser retries automatically; if the session is gone, stop and sign out.
-      api.get('/auth/me').catch(() => source.close());
+      api
+        .get<{ user: unknown }>('/auth/me')
+        .then((me) => {
+          if (!me.user) {
+            source.close();
+            endSession('Your session has expired. Please sign in again.');
+          }
+        })
+        .catch(() => {});
     };
 
     on('snapshot', (data) => applyTicks((data as { quotes: TickTuple[] }).quotes));
