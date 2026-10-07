@@ -234,3 +234,48 @@ As an admin, I want an immutable audit trail of user and system activity, so tha
 
 **US-35 Account activity**
 As an investor, I want to view my own activity log, so that I can spot anything suspicious.
+
+---
+
+## Traceability
+
+Where each story is implemented and which automated tests cover it. Server tests live in `server/tests/`
+(Vitest + supertest), end-to-end tests in `e2e/` (Playwright). All API paths are under `/api`.
+
+| Story | Screens | API | Server tests | E2E tests |
+| ----- | ------- | --- | ------------ | --------- |
+| US-01 Registration | `/register` | `POST /auth/register` | auth | auth |
+| US-02 Login | `/login` | `POST /auth/login` | auth | auth |
+| US-03 Logout | Account menu | `POST /auth/logout` | auth | auth |
+| US-04 Profile management | `/profile` | `GET/PATCH /profile`, `PUT /profile/bank-account` | auth, trading | funds |
+| US-05 Secure authentication | all | session cookie, CSRF and origin checks, rate limits, `POST /profile/password` | auth | auth |
+| US-06 Session management | `/profile?tab=security` | `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-others` | auth, stream | auth |
+| US-07 Transaction confirmation | order, IPO and withdrawal dialogs | `POST /profile/pin`; PIN checked by orders, IPOs, withdrawals | trading | trading |
+| US-08 Dashboard | `/` | `GET /portfolio`, `/market/overview`, `/watchlists`, `/orders`, `/funds`, `GET /stream` | — | — |
+| US-09 Market indices | `/markets`, `/stocks/NIFTY50` | `GET /market/indices`, `/securities/:symbol/constituents` | market | — |
+| US-10 Movers and trends | `/markets`, `/` | `GET /market/movers`, `/market/sectors`, `/market/breadth` | market | — |
+| US-11 Search securities | top bar, `/explore` | `GET /securities/search`, `/securities` | market | trading |
+| US-12 Security details | `/stocks/:symbol` | `GET /securities/:symbol`, `/securities/:symbol/history` | market | trading |
+| US-13 Market orders | order ticket | `POST /orders/preview`, `POST /orders` | trading | trading |
+| US-14 Limit orders | order ticket | `POST /orders` | trading | trading |
+| US-15 Modify and cancel orders | `/orders` | `PATCH /orders/:id`, `POST /orders/:id/cancel` | trading | trading |
+| US-16 Order status and history | `/orders` | `GET /orders`, `GET /trades` | trading | trading |
+| US-17 Holdings | `/portfolio` | `GET /portfolio` | trading | trading |
+| US-18 Portfolio performance | `/`, `/portfolio` | `GET /portfolio/performance` | trading | — |
+| US-19 Watchlists | `/watchlist`, Watch menu | `/watchlists` (CRUD and items) | engagement | watchlist-alerts |
+| US-20 Price alerts | `/alerts`, Alert dialog | `/alerts` (CRUD) | engagement | watchlist-alerts |
+| US-21 Notifications | bell, `/notifications` | `/notifications`, `PUT /profile/notification-preferences`, `GET /stream` | engagement, trading | trading |
+| US-22 Browse IPOs | `/ipo`, `/ipo/:id` | `GET /ipos`, `GET /ipos/:id` | ipo | ipo |
+| US-23 Apply for an IPO | `/ipo/:id` | `POST /ipos/:id/apply`, `POST /ipos/applications/:id/cancel` | ipo | ipo |
+| US-24 Allotment and history | `/ipo?tab=applications` | `GET /ipos/applications`; allotment and listing run by the scheduler | ipo | ipo |
+| US-25 Add money | `/funds` | `POST /funds/deposit` | trading | funds |
+| US-26 Withdraw money | `/funds` | `POST /funds/withdraw` | trading | funds |
+| US-27 View balance | `/funds`, `/` | `GET /funds` | trading | funds |
+| US-28 Account statement | `/statements` | `GET /statements`, `/statements/ledger.csv`, `/statements/trades.csv` | trading | funds |
+| US-29 Manage users | `/admin/users` | `/admin/users` (status, unlock, revoke sessions, funds adjustment, role) | admin | admin |
+| US-30 Manage securities | `/admin/securities` | `/admin/securities` (create, edit, trading status, price) | admin | — |
+| US-31 Manage IPOs | `/admin/ipos` | `/admin/ipos` (create, edit, subscription, allot, list, withdraw) | admin, ipo | — |
+| US-32 Manage orders and transactions | `/admin/orders`, `/admin/transactions` | `/admin/orders`, `/admin/trades`, `/admin/ledger`, `/admin/fund-transactions` | admin | — |
+| US-33 Application data | `/admin`, `/admin/settings` | `GET /admin/overview`, `/admin/settings`, `POST /admin/announcements` | admin | — |
+| US-34 Audit trail | `/admin/audit` | `GET /admin/audit-logs`, `GET /admin/audit-logs/verify` | auth, admin, demo-seed | admin |
+| US-35 Account activity | `/profile?tab=activity` | `GET /profile/activity` | auth | — |

@@ -136,6 +136,29 @@ describe('sessions and CSRF', () => {
   });
 });
 
+describe('profile', () => {
+  it('updates personal details, keeps the email read-only and records the change', async () => {
+    const { client, email } = await registerClient({ fullName: 'Asha Rao' });
+    const res = await client.patch('/api/profile', {
+      fullName: 'Asha R. Rao',
+      phone: '9123456780',
+      pan: 'abcde1234f',
+      address: '12 MG Road, Pune',
+      email: 'changed@example.com',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({ fullName: 'Asha R. Rao', phone: '9123456780', pan: 'ABCDE1234F', address: '12 MG Road, Pune', email });
+
+    const invalid = await client.patch('/api/profile', { phone: '12345', pan: 'NOTAPAN' });
+    expect(invalid.status).toBe(400);
+    expect(Object.keys(invalid.body.error.details.fields)).toEqual(expect.arrayContaining(['phone', 'pan']));
+
+    const activity = await client.get('/api/profile/activity');
+    const updated = activity.body.items.find((i: { action: string }) => i.action === 'PROFILE_UPDATED');
+    expect(updated.details.changed).toEqual(expect.arrayContaining(['fullName', 'phone', 'pan', 'address']));
+  });
+});
+
 describe('audit trail', () => {
   it('records actions in an append-only hash chain', async () => {
     const { client } = await registerClient();
