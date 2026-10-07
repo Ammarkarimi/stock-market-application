@@ -15,6 +15,7 @@
     "test": "npm run test -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
     "db:reset": "npm run db:reset -w server",
+    "promote-admin": "npm run promote-admin -w server --",
     "format": "prettier --write ."
   },
   "engines": {

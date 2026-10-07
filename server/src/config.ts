@@ -43,7 +43,8 @@ export const config = {
   /** Interval between simulated market ticks. */
   tickIntervalMs: num('TICK_INTERVAL_MS', 2000),
   simulationEnabled: bool('MARKET_SIMULATION', !isTest),
-  seedDemoData: bool('SEED_DEMO_DATA', !isTest),
+  /** Demo accounts have published passwords, so production only seeds them when explicitly asked to. */
+  seedDemoData: bool('SEED_DEMO_DATA', !isTest && env !== 'production'),
   rateLimitEnabled: bool('RATE_LIMIT', !isTest),
   clientDistPath: path.resolve(serverRoot, '../client/dist'),
   timezone: 'Asia/Kolkata',
