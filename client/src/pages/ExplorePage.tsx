@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { LiveChange, LivePrice } from '@/components/market/LivePrice';
 import { useTrade } from '@/components/trade/TradeProvider';
 import { Badge } from '@/components/ui/Badge';
@@ -120,7 +120,7 @@ export default function ExplorePage() {
                     <Tr key={item.symbol} className="cursor-pointer" onClick={() => navigate(`/stocks/${symbolPath(item.symbol)}`)}>
                       <Td>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold">{item.symbol}</span>
+                          <Link to={`/stocks/${symbolPath(item.symbol)}`} className="font-semibold hover:text-primary" onClick={(e) => e.stopPropagation()}>{item.symbol}</Link>
                           {item.type !== 'STOCK' && <Badge tone={item.type === 'INDEX' ? 'info' : 'primary'}>{item.type}</Badge>}
                           {item.tradingStatus === 'HALTED' && <Badge tone="warning">Halted</Badge>}
                         </div>

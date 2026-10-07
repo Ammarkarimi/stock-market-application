@@ -48,7 +48,7 @@ export function MoversTable({ items, metric = 'change', showTrade = true }: { it
           {items.map((item) => (
             <Tr key={item.symbol} className="cursor-pointer" onClick={() => navigate(`/stocks/${symbolPath(item.symbol)}`)}>
               <Td>
-                <p className="font-semibold text-fg">{item.symbol}</p>
+                <Link to={`/stocks/${symbolPath(item.symbol)}`} className="font-semibold text-fg hover:text-primary" onClick={(e) => e.stopPropagation()}>{item.symbol}</Link>
                 <p className="max-w-52 truncate text-xs text-muted">{item.name}</p>
               </Td>
               <Td align="right">

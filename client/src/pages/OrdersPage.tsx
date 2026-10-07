@@ -159,8 +159,10 @@ function OrderHistory({ onShow }: { onShow: (id: number) => void }) {
                 {data.items.map((order) => (
                   <Tr key={order.id} className="cursor-pointer" onClick={() => onShow(order.id)}>
                     <Td>
-                      <SideLabel side={order.side} /> <span className="font-semibold">{order.symbol}</span>
-                      <p className="text-xs text-muted">#{order.id} · {order.orderType === 'MARKET' ? 'Market' : `Limit ${formatINR(order.limitPrice)}`}{order.orderType === 'LIMIT' ? ` · ${order.validity}` : ''}</p>
+                      <button type="button" className="text-left" onClick={(e) => { e.stopPropagation(); onShow(order.id); }}>
+                        <SideLabel side={order.side} /> <span className="font-semibold hover:text-primary">{order.symbol}</span>
+                        <p className="text-xs text-muted">#{order.id} · {order.orderType === 'MARKET' ? 'Market' : `Limit ${formatINR(order.limitPrice)}`}{order.orderType === 'LIMIT' ? ` · ${order.validity}` : ''}</p>
+                      </button>
                     </Td>
                     <Td align="right">{formatNumber(order.quantity)}</Td>
                     <Td align="right">{formatINR(order.averagePrice ?? order.limitPrice)}</Td>

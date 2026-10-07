@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Field';
@@ -64,7 +64,10 @@ export default function AdminUsersPage() {
                   {data.items.map((user) => (
                     <Tr key={user.id} className="cursor-pointer" onClick={() => navigate(`/admin/users/${user.id}`)}>
                       <Td>
-                        <p className="font-medium">{user.fullName} {user.role === 'ADMIN' && <Badge tone="primary" className="ml-1">Admin</Badge>}</p>
+                        <p className="font-medium">
+                          <Link to={`/admin/users/${user.id}`} className="hover:text-primary" onClick={(e) => e.stopPropagation()}>{user.fullName}</Link>
+                          {user.role === 'ADMIN' && <Badge tone="primary" className="ml-1">Admin</Badge>}
+                        </p>
                         <p className="text-xs text-muted">{user.email} · joined {formatDate(user.createdAt)}</p>
                       </Td>
                       <Td className="hidden text-muted md:table-cell">{user.phone ?? '—'}</Td>
