@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { registerMarketListeners } from './bootstrap.js';
 import { config } from './config.js';
 import { closeDatabase, db } from './db/index.js';
 import { initMarket, startSimulation, stopSimulation } from './market/engine.js';
@@ -9,6 +10,7 @@ function main() {
   console.log('Preparing market data...');
   seedMarket();
   initMarket();
+  registerMarketListeners();
   if (config.simulationEnabled) startSimulation();
 
   const app = createApp();

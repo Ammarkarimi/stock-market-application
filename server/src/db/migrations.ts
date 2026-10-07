@@ -183,9 +183,11 @@ const migrations: Migration[] = [
       CREATE INDEX idx_orders_user ON orders(user_id, id);
       CREATE INDEX idx_orders_status ON orders(status, security_id);
 
+      -- Executed trades. IPO allotments are recorded as source = 'IPO' trades without an order.
       CREATE TABLE trades (
         id               INTEGER PRIMARY KEY,
-        order_id         INTEGER NOT NULL REFERENCES orders(id),
+        order_id         INTEGER REFERENCES orders(id),
+        source           TEXT NOT NULL DEFAULT 'ORDER' CHECK (source IN ('ORDER', 'IPO')),
         user_id          INTEGER NOT NULL REFERENCES users(id),
         security_id      INTEGER NOT NULL REFERENCES securities(id),
         side             TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),

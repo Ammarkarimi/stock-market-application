@@ -10,10 +10,15 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import authRoutes from './routes/auth.routes.js';
+import fundsRoutes from './routes/funds.routes.js';
 import marketRoutes from './routes/market.routes.js';
+import ordersRoutes from './routes/orders.routes.js';
+import portfolioRoutes from './routes/portfolio.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import securitiesRoutes from './routes/securities.routes.js';
+import statementsRoutes from './routes/statements.routes.js';
 import streamRoutes from './routes/stream.routes.js';
+import tradesRoutes from './routes/trades.routes.js';
 
 export function createApp() {
   const app = express();
@@ -59,6 +64,11 @@ export function createApp() {
   api.use('/market', requireAuth, marketRoutes);
   api.use('/securities', requireAuth, securitiesRoutes);
   api.use('/stream', requireAuth, streamRoutes);
+  api.use('/orders', requireAuth, ordersRoutes);
+  api.use('/trades', requireAuth, tradesRoutes);
+  api.use('/portfolio', requireAuth, portfolioRoutes);
+  api.use('/funds', requireAuth, fundsRoutes);
+  api.use('/statements', requireAuth, statementsRoutes);
   api.use(notFoundHandler);
 
   app.use('/api', api);
