@@ -4,11 +4,12 @@ import cookieParser from 'cookie-parser';
 import express, { Router } from 'express';
 import helmet from 'helmet';
 import { config } from './config.js';
-import { loadSession, requireAuth } from './middleware/auth.js';
+import { loadSession, requireAdmin, requireAuth } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import adminRoutes from './routes/admin.routes.js';
 import alertsRoutes from './routes/alerts.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import fundsRoutes from './routes/funds.routes.js';
@@ -77,6 +78,7 @@ export function createApp() {
   api.use('/alerts', requireAuth, alertsRoutes);
   api.use('/notifications', requireAuth, notificationsRoutes);
   api.use('/ipos', requireAuth, iposRoutes);
+  api.use('/admin', requireAdmin, adminRoutes);
   api.use(notFoundHandler);
 
   app.use('/api', api);

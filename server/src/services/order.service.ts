@@ -333,10 +333,10 @@ function rejectOrder(order: OrderRow, symbol: string, reason: string, actor: Act
  * records the trade. Must run inside a transaction. Returns false (and rejects the order) when funds
  * or shares are no longer sufficient.
  */
-function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: Actor): boolean {
+function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: Actor, historical?: ExecutionContext): boolean {
   const value = order.quantity * price;
   const charges = calculateCharges(order.side, value);
-  const tradingDate = currentTradingDate();
+  const tradingDate = historical?.tradingDate ?? currentTradingDate();
   const now = nowIso();
   let realizedPnl: number | null = null;
   let netAmount: number;
@@ -428,7 +428,7 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
     now,
     order.id,
   );
-  recordTradeVolume(order.security_id, order.quantity, price);
+  if (!historical) recordTradeVolume(order.security_id, order.quantity, price);
 
   const verb = order.side === 'BUY' ? 'Bought' : 'Sold';
   const pnlText = realizedPnl !== null ? ` Realized P&L: ${formatInr(realizedPnl)}.` : '';
@@ -451,8 +451,18 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
   return true;
 }
 
+/**
+ * Replays an execution at a past price and trading date. Only used to seed realistic demo history;
+ * live orders always execute against the current market.
+ */
+export interface ExecutionContext {
+  tradingDate: string;
+  /** Paise. */
+  price: number;
+}
+
 /** Decides what happens to a freshly placed (or modified) order against the current market. */
-function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor): void {
+function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, historical?: ExecutionContext): void {
   if (quote.tradingStatus !== 'ACTIVE') {
     rejectOrder(order, quote.symbol, `Trading in ${quote.symbol} is halted`, actor);
     return;
@@ -460,6 +470,10 @@ function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor): void 
   const { lower, upper } = circuitLimits(quote);
   if (order.limit_price !== null && (order.limit_price < lower || order.limit_price > upper)) {
     rejectOrder(order, quote.symbol, `Limit price outside the circuit range ${formatInr(lower)} – ${formatInr(upper)}`, actor);
+    return;
+  }
+  if (historical) {
+    executeOrder(order, quote, historical.price, actor, historical);
     return;
   }
   const marketable = isMarketable({ side: order.side, orderType: order.order_type, limitPrice: order.limit_price }, quote);
@@ -504,7 +518,7 @@ export async function placeOrder(userId: number, input: OrderInput, pin: string 
 }
 
 /** Places an order whose confirmation (PIN) has already been verified. */
-export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Actor): OrderDto {
+export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Actor, historical?: ExecutionContext): OrderDto {
   const order = validateInput(input);
   return transaction(() => {
     const now = nowIso();
@@ -519,7 +533,7 @@ export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Ac
       order.validity,
       order.quantity,
       order.limitPrice,
-      currentTradingDate(),
+      historical?.tradingDate ?? currentTradingDate(),
       now,
       now,
     );
@@ -540,7 +554,7 @@ export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Ac
         lastPrice: toRupees(order.quote.last),
       },
     });
-    processNewOrder(get<OrderRow>('SELECT * FROM orders WHERE id = ?', id)!, order.quote, actor);
+    processNewOrder(get<OrderRow>('SELECT * FROM orders WHERE id = ?', id)!, order.quote, actor, historical);
     return orderDtoById(id);
   });
 }

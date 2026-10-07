@@ -64,7 +64,7 @@ export interface IpoRow {
   updated_at: string;
 }
 
-interface ApplicationRow {
+export interface ApplicationRow {
   id: number;
   ipo_id: number;
   user_id: number;
@@ -565,7 +565,7 @@ function createListedSecurity(ipo: IpoRow, issuePrice: number, listingPrice: num
 }
 
 /** Records allotted shares in a user's holdings with an IPO trade at the issue price. */
-export function creditAllottedShares(app: ApplicationRow, securityId: number): void {
+export function creditAllottedShares(app: ApplicationRow, securityId: number, tradingDate: string = currentTradingDate()): void {
   const now = nowIso();
   const value = app.allotted_quantity * app.allotment_price!;
   run(
@@ -590,7 +590,7 @@ export function creditAllottedShares(app: ApplicationRow, securityId: number): v
     app.allotment_price,
     value,
     value,
-    currentTradingDate(),
+    tradingDate,
     now,
   );
   run('UPDATE ipo_applications SET shares_credited_at = ?, updated_at = ? WHERE id = ?', now, now, app.id);
