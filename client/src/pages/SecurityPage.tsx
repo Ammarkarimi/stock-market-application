@@ -173,6 +173,7 @@ export default function SecurityPage() {
             <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{security.name}</h1>
             <Badge tone={isIndex ? 'info' : security.type === 'STOCK' ? 'neutral' : 'primary'}>{security.type}</Badge>
             {halted && <Badge tone="warning">Trading halted</Badge>}
+            {detail.priceSource === 'simulated' && <Badge tone="neutral">Simulated prices</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted">
             {security.exchange}: {security.symbol}
@@ -338,7 +339,7 @@ export default function SecurityPage() {
 
       {detail.financials.length > 0 && (
         <Card>
-          <CardHeader title="Financials" subtitle="Annual revenue and net profit (₹ crore, illustrative)" />
+          <CardHeader title="Financials" subtitle={`Annual revenue and net profit (₹ crore, ${detail.financialsSource === 'reported' ? 'as reported' : 'illustrative'})`} />
           <CardBody>
             <div className="flex h-48 items-end gap-3 sm:gap-6">
               {detail.financials.map((f) => (

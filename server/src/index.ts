@@ -2,8 +2,11 @@ import { createApp } from './app.js';
 import { registerMarketListeners } from './bootstrap.js';
 import { config } from './config.js';
 import { closeDatabase, db } from './db/index.js';
+import { istDate } from './lib/time.js';
 import { startScheduler, stopScheduler } from './jobs/scheduler.js';
-import { initMarket, startSimulation, stopSimulation } from './market/engine.js';
+import { alignTradingDate, initMarket, startSimulation, stopSimulation } from './market/engine.js';
+import { startLiveFeed, stopLiveFeed } from './market/liveFeed.js';
+import { updateMarketSession } from './market/session.js';
 import { seedIpos } from './market/seedIpos.js';
 import { seedMarket } from './market/seedMarket.js';
 import { DEMO_ACCOUNTS, seedDemoData } from './seed/demo.js';
@@ -13,8 +16,18 @@ async function main() {
   console.log('Preparing market data...');
   seedMarket();
   seedIpos();
+  if (config.marketData === 'yahoo') updateMarketSession({ source: 'yahoo', phase: 'CLOSED' });
   initMarket();
   registerMarketListeners();
+  if (config.marketData === 'yahoo') {
+    console.log('Loading live prices from Yahoo Finance...');
+    try {
+      await startLiveFeed();
+    } catch (err) {
+      console.warn(`Live market data unavailable (${(err as Error).message}); using simulated prices instead.`);
+      alignTradingDate(istDate());
+    }
+  }
   if (config.seedDemoData) {
     await seedDemoData();
   }
@@ -33,6 +46,7 @@ async function main() {
   const shutdown = () => {
     console.log('Shutting down...');
     stopSimulation();
+    void stopLiveFeed();
     stopScheduler();
     server.close(() => {
       closeDatabase();

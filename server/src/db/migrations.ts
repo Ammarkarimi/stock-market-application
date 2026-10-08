@@ -375,6 +375,21 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    name: 'reported_financials',
+    sql: `
+      -- Annual results reported by a live data provider (₹ crore); absent for simulated securities.
+      CREATE TABLE financials (
+        security_id   INTEGER NOT NULL REFERENCES securities(id),
+        period_end    TEXT NOT NULL,
+        revenue_cr    REAL,
+        net_profit_cr REAL,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (security_id, period_end)
+      );
+    `,
+  },
 ];
 
 export function migrate(database: Database.Database): void {

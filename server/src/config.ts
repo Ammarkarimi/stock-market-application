@@ -22,6 +22,13 @@ function bool(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
 }
 
+function marketDataSource(fallback: 'yahoo' | 'simulated'): 'yahoo' | 'simulated' {
+  const raw = process.env.MARKET_DATA?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === 'yahoo' || raw === 'simulated') return raw;
+  throw new Error('Environment variable MARKET_DATA must be "yahoo" or "simulated"');
+}
+
 function resolveDatabasePath(file: string): string {
   return file === ':memory:' ? file : path.resolve(serverRoot, file);
 }
@@ -43,6 +50,13 @@ export const config = {
   cookieSecure: bool('COOKIE_SECURE', env === 'production'),
   /** Value passed to Express "trust proxy" so req.ip reflects the client behind a reverse proxy. */
   trustProxy: num('TRUST_PROXY', 0),
+  /**
+   * Where prices come from: 'yahoo' for real NSE/BSE prices (delayed ~15 minutes) from Yahoo Finance, or
+   * 'simulated' for the built-in random-walk market. Tests always simulate.
+   */
+  marketData: isTest ? ('simulated' as const) : marketDataSource('yahoo'),
+  /** How often live quotes are refreshed while the exchange is open. */
+  livePollMs: Math.max(5000, num('LIVE_POLL_MS', 15_000)),
   /** Interval between simulated market ticks. */
   tickIntervalMs: num('TICK_INTERVAL_MS', 2000),
   simulationEnabled: bool('MARKET_SIMULATION', !isTest),

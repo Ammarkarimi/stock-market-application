@@ -16,6 +16,7 @@ import {
   type LiveQuote,
 } from './quoteStore.js';
 import { BAR_MS } from './seedMarket.js';
+import { isLiveSource, isMarketOpen } from './session.js';
 
 interface PriceState {
   /** Slow-moving log price that carries the trend. */
@@ -54,6 +55,8 @@ const currentBars = new Map<number, Bar>();
 let indexComponents = new Map<number, IndexComponent[]>();
 let tradingDate = '';
 let timer: NodeJS.Timeout | null = null;
+/** Securities priced by an external feed instead of the simulator. */
+const externalIds = new Set<number>();
 const tickListeners: TickListener[] = [];
 const rolloverListeners: RolloverListener[] = [];
 
@@ -63,6 +66,17 @@ const dailyVol = (q: LiveQuote) => q.volatility / Math.sqrt(TRADING_DAYS_PER_YEA
 const isIndex = (q: LiveQuote) => q.type === 'INDEX';
 const isTracking = (q: LiveQuote) => !isIndex(q) && q.underlyingSymbol !== null;
 const isPrimary = (q: LiveQuote) => !isIndex(q) && q.underlyingSymbol === null;
+const isExternal = (q: LiveQuote) => externalIds.has(q.securityId);
+
+/** Marks securities whose prices come from an external feed; the simulator leaves them alone. */
+export function setExternallyPriced(ids: Iterable<number>): void {
+  externalIds.clear();
+  for (const id of ids) externalIds.add(id);
+}
+
+export function isExternallyPriced(securityId: number): boolean {
+  return externalIds.has(securityId);
+}
 
 export function onMarketTick(listener: TickListener): void {
   tickListeners.push(listener);
@@ -149,7 +163,8 @@ export function initMarket(): void {
     currentBars.set(bar.security_id, { ts: bar.ts, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume });
   }
   newDayDrifts();
-  if (tradingDate < istDate()) rollover(istDate());
+  // A live feed moves the trading date itself when the exchange opens a new session.
+  if (!isLiveSource() && tradingDate < istDate()) rollover(istDate());
 }
 
 function refreshTrackingRatios(): void {
@@ -212,13 +227,13 @@ function applyPrice(q: LiveQuote, price: number, at: number): void {
 /** Recomputes derived instruments (indices, then index-tracking ETFs) from their underlyings. */
 function updateDerived(at: number, changed: LiveQuote[]): void {
   for (const q of allQuotes()) {
-    if (!isIndex(q)) continue;
+    if (!isIndex(q) || isExternal(q)) continue;
     applyPrice(q, computeIndexValue(q), at);
     updateBar(q, at, 0);
     changed.push(q);
   }
   for (const q of allQuotes()) {
-    if (!isTracking(q) || q.tradingStatus !== 'ACTIVE') continue;
+    if (!isTracking(q) || isExternal(q) || q.tradingStatus !== 'ACTIVE') continue;
     const underlying = getQuoteBySymbol(q.underlyingSymbol!);
     const ratio = trackingRatio.get(q.securityId);
     if (!underlying || !ratio) continue;
@@ -254,17 +269,21 @@ function finishTick(changed: LiveQuote[]): void {
   }
 }
 
-/** Advances every simulated price by one step. */
+/** Advances every simulated price by one step. With a live feed, only securities it does not cover move, and only while the market is open. */
 export function tick(at: number = nowMs()): LiveQuote[] {
-  const today = istDate(at);
-  if (today !== tradingDate) rollover(today);
+  if (isLiveSource()) {
+    if (!isMarketOpen()) return [];
+  } else {
+    const today = istDate(at);
+    if (today !== tradingDate) rollover(today);
+  }
 
   const theta = 1 - Math.exp(-config.tickIntervalMs / DEVIATION_TAU_MS);
   const marketShock = gaussian();
   const changed: LiveQuote[] = [];
 
   for (const q of allQuotes()) {
-    if (!isPrimary(q) || q.tradingStatus !== 'ACTIVE' || !q.isTradable) continue;
+    if (!isPrimary(q) || isExternal(q) || q.tradingStatus !== 'ACTIVE' || !q.isTradable) continue;
     let state = priceState.get(q.securityId);
     if (!state) {
       resetState(q);
@@ -338,7 +357,7 @@ export function rollover(newDate: string): void {
         );
       }
       q.prevClose = q.last;
-      if (isPrimary(q) && q.tradingStatus === 'ACTIVE') {
+      if (isPrimary(q) && !isExternal(q) && q.tradingStatus === 'ACTIVE') {
         const gap = Math.exp(gaussian() * dailyVol(q) * 0.25);
         q.last = roundToTick(q.last * gap, q.tickSize);
         resetState(q);
@@ -350,7 +369,7 @@ export function rollover(newDate: string): void {
       q.updatedAt = nowMs();
     }
     for (const q of quotes) {
-      if (isIndex(q)) q.open = q.high = q.low = q.last = computeIndexValue(q);
+      if (isIndex(q) && !isExternal(q)) q.open = q.high = q.low = q.last = computeIndexValue(q);
     }
     refreshTrackingRatios();
     persistQuotes(quotes);
@@ -368,6 +387,63 @@ export function rollover(newDate: string): void {
       console.error('Market rollover listener failed', err);
     }
   }
+}
+
+/** One security's state as reported by an external feed (prices in paise, time in ms). */
+export interface ExternalQuote {
+  securityId: number;
+  last: number;
+  prevClose: number;
+  open: number;
+  high: number;
+  low: number;
+  volume: number;
+  time: number;
+}
+
+/**
+ * Moves the trading date to the exchange's current session. A later session closes the previous day as a
+ * normal rollover; an earlier one (a database created on a weekend or holiday) is adopted as is.
+ */
+export function alignTradingDate(sessionDate: string): void {
+  if (sessionDate > tradingDate) {
+    rollover(sessionDate);
+  } else if (sessionDate < tradingDate) {
+    tradingDate = sessionDate;
+    setState('tradingDate', sessionDate);
+  }
+}
+
+/** Applies prices from an external feed. Order matching, alerts and the live stream react as they do to simulated ticks. */
+export function applyExternalQuotes(updates: ExternalQuote[]): LiveQuote[] {
+  const changed: LiveQuote[] = [];
+  for (const update of updates) {
+    const q = getQuote(update.securityId);
+    if (!q || update.last <= 0) continue;
+    const sameSession = q.tradingDate === tradingDate;
+    const volumeDelta = sameSession ? Math.max(0, update.volume - q.volume) : 0;
+    if (sameSession && q.last === update.last && volumeDelta === 0 && q.prevClose === update.prevClose) continue;
+    q.last = update.last;
+    q.prevClose = update.prevClose > 0 ? update.prevClose : q.prevClose;
+    q.open = update.open > 0 ? update.open : update.last;
+    q.high = Math.max(update.high, update.last);
+    q.low = update.low > 0 ? Math.min(update.low, update.last) : update.last;
+    q.volume = Math.max(update.volume, sameSession ? q.volume : 0);
+    q.turnover = Math.round(q.volume * ((q.open + q.last) / 2));
+    q.tradingDate = tradingDate;
+    q.updatedAt = update.time;
+    if (sameSession) updateBar(q, update.time, volumeDelta);
+    changed.push(q);
+  }
+  if (changed.length === 0) return changed;
+  updateDerived(nowMs(), changed);
+  finishTick(changed);
+  return changed;
+}
+
+/** Forgets in-progress bars, after a feed has rewritten the stored intraday history. */
+export function resetCurrentBars(): void {
+  currentBars.clear();
 }
 
 export function startSimulation(): void {

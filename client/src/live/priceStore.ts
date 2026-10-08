@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
-/** Server tick tuple: [symbol, last, change, changePercent, high, low, volume]. */
-export type TickTuple = [string, number, number, number, number, number, number];
+/** Server tick tuple: [symbol, last, change, changePercent, high, low, volume, time (s)]. */
+export type TickTuple = [string, number, number, number, number, number, number, number];
 
 export interface LiveTick {
   symbol: string;
@@ -11,6 +11,8 @@ export interface LiveTick {
   high: number;
   low: number;
   volume: number;
+  /** Exchange time of the price, in seconds. */
+  time: number;
   /** Direction of the latest move: 1 up, -1 down, 0 unchanged. */
   direction: -1 | 0 | 1;
   /** Client receive time, used to retrigger flash animations. */
@@ -24,7 +26,7 @@ let version = 0;
 
 export function applyTicks(tuples: TickTuple[]): void {
   const now = Date.now();
-  for (const [symbol, lastPrice, change, changePercent, high, low, volume] of tuples) {
+  for (const [symbol, lastPrice, change, changePercent, high, low, volume, time] of tuples) {
     const previous = ticks.get(symbol);
     if (previous && previous.lastPrice === lastPrice && previous.volume === volume) continue;
     const direction = !previous || previous.lastPrice === lastPrice ? (previous?.direction ?? 0) : lastPrice > previous.lastPrice ? 1 : -1;
@@ -36,6 +38,7 @@ export function applyTicks(tuples: TickTuple[]): void {
       high,
       low,
       volume,
+      time,
       direction,
       at: previous && previous.lastPrice !== lastPrice ? now : (previous?.at ?? 0),
     });

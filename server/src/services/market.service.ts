@@ -6,7 +6,7 @@ import { changePercent, toRupees, toRupeesOrNull } from '../lib/money.js';
 import { createRng, hashString } from '../lib/rng.js';
 import { addDays, istDate, istDayStart } from '../lib/time.js';
 import { pageOf, type Page } from '../lib/validation.js';
-import { currentTradingDate, isSimulationRunning } from '../market/engine.js';
+import { currentTradingDate, isExternallyPriced, isSimulationRunning } from '../market/engine.js';
 import {
   allQuotes,
   circuitLimits,
@@ -17,6 +17,7 @@ import {
   type QuoteDto,
   type SecurityType,
 } from '../market/quoteStore.js';
+import { marketSession } from '../market/session.js';
 
 export const SECURITY_TYPES: SecurityType[] = ['STOCK', 'ETF', 'REIT', 'INVIT', 'INDEX'];
 
@@ -218,7 +219,27 @@ function syntheticFinancials(row: SecurityRow) {
   return rows;
 }
 
+/** The last five fiscal years as reported to the exchange (fetched from a live data provider). */
+function reportedFinancials(securityId: number) {
+  const rows = all<{ period_end: string; revenue_cr: number | null; net_profit_cr: number | null }>(
+    `SELECT period_end, revenue_cr, net_profit_cr FROM financials
+      WHERE security_id = ? AND revenue_cr IS NOT NULL AND net_profit_cr IS NOT NULL ORDER BY period_end DESC LIMIT 5`,
+    securityId,
+  ).reverse();
+  return rows.map((r) => ({
+    // Indian companies name a fiscal year after the year in which it ends (FY26 ends in March 2026).
+    year: `FY${r.period_end.slice(2, 4)}`,
+    revenueCr: Math.round(r.revenue_cr!),
+    netProfitCr: Math.round(r.net_profit_cr!),
+    netMarginPct: r.revenue_cr ? Math.round((r.net_profit_cr! / r.revenue_cr) * 1000) / 10 : 0,
+  }));
+}
+
 export interface SecurityDetail {
+  /** Whether prices come from the exchange (via the live feed) or from the simulator. */
+  priceSource: 'live' | 'simulated';
+  /** Reported annual results, or illustrative figures derived from the reference data. */
+  financialsSource: 'reported' | 'illustrative' | null;
   quote: QuoteDto;
   security: {
     symbol: string;
@@ -292,7 +313,11 @@ export function getSecurityDetail(symbol: string): SecurityDetail {
     quote.securityId,
   ).map((m) => ({ ...m, weight: round2(m.weight * 100) }));
 
+  const reported = reportedFinancials(quote.securityId);
+  const financials = reported.length > 0 ? reported : syntheticFinancials(row);
   return {
+    priceSource: isExternallyPriced(quote.securityId) ? 'live' : 'simulated',
+    financialsSource: financials.length === 0 ? null : reported.length > 0 ? 'reported' : 'illustrative',
     quote: toQuoteDto(quote),
     security: {
       symbol: row.symbol,
@@ -333,7 +358,7 @@ export function getSecurityDetail(symbol: string): SecurityDetail {
       lowerCircuit: toRupees(lower),
     },
     performance,
-    financials: syntheticFinancials(row),
+    financials,
     memberOf,
   };
 }
@@ -547,14 +572,30 @@ export function getIndexConstituents(symbol: string) {
     .sort((a, b) => b.weight - a.weight);
 }
 
+function sessionDescription(): string {
+  const session = marketSession();
+  if (session.source === 'simulated') return 'Simulated market, open 24×7';
+  const delay = session.delayMinutes > 0 ? `, ${session.delayMinutes} min delayed` : '';
+  if (session.phase === 'OPEN') return `Market open · NSE prices${delay}`;
+  if (session.phase === 'PRE_OPEN') return 'Pre-open session · trading starts at 9:15 am IST';
+  return 'Market closed · NSE trades 9:15 am – 3:30 pm IST on weekdays';
+}
+
 export function getMarketStatus() {
+  const session = marketSession();
+  const simulated = session.source === 'simulated';
   return {
-    status: 'OPEN' as const,
-    session: 'Simulated market, open 24×7',
-    simulated: true,
-    live: isSimulationRunning(),
+    status: session.phase === 'OPEN' || simulated ? ('OPEN' as const) : ('CLOSED' as const),
+    phase: simulated ? ('OPEN' as const) : session.phase,
+    session: sessionDescription(),
+    simulated,
+    source: simulated ? 'Simulated' : 'Yahoo Finance',
+    delayMinutes: session.delayMinutes,
+    asOf: session.asOf ? new Date(session.asOf).toISOString() : null,
+    feedError: session.lastError,
+    live: simulated ? isSimulationRunning() : session.lastError === null,
     tradingDate: currentTradingDate(),
-    tickIntervalMs: config.tickIntervalMs,
+    tickIntervalMs: simulated ? config.tickIntervalMs : config.livePollMs,
     serverTime: nowIso(),
   };
 }

@@ -4,7 +4,7 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { toPaise, toRupees } from '../lib/money.js';
 import { addDays, istDate, istDayStartIso } from '../lib/time.js';
 import { pageOf, type Page } from '../lib/validation.js';
-import { setPrice } from '../market/engine.js';
+import { isExternallyPriced, setPrice } from '../market/engine.js';
 import { getQuote, getQuoteBySymbol, reloadQuote, toQuoteDto, type SecurityType } from '../market/quoteStore.js';
 import { tickSizeFor } from '../market/seedMarket.js';
 import type { Actor } from './actor.js';
@@ -392,6 +392,7 @@ export function setTradingStatus(symbol: string, status: 'ACTIVE' | 'HALTED', re
 export function setSecurityPrice(symbol: string, price: number, actor: Actor) {
   const security = requireSecurity(symbol);
   if (security.security_type === 'INDEX') throw badRequest('Index values are derived from their constituents');
+  if (isExternallyPriced(security.id)) throw badRequest(`${security.symbol} is priced by the live market feed`);
   const quote = setPrice(security.id, toPaise(price));
   audit({ actor, action: 'SECURITY_PRICE_SET', subjectUserId: null, entityType: 'SECURITY', entityId: security.id, details: { symbol: security.symbol, requested: price, applied: toRupees(quote.last) } });
   return toQuoteDto(quote);

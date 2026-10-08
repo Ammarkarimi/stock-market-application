@@ -1,7 +1,11 @@
+import { useQuery } from '@tanstack/react-query';
 import { ShieldCheck } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { useAuth } from '@/auth/AuthProvider';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { keys } from '@/lib/queryClient';
+import type { MarketOverview } from '@/lib/types';
 import { Logo } from './Logo';
 import { adminNav, mainNav, type NavItem } from './nav';
 
@@ -48,9 +52,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         )}
       </nav>
-      <p className="border-t border-border px-5 py-3 text-[11px] leading-snug text-subtle">
-        Simulated market data for demonstration. Not investment advice.
-      </p>
+      <DataSourceNote />
     </div>
+  );
+}
+
+/** Where prices come from, and a reminder that trades use virtual money. */
+function DataSourceNote() {
+  const { data } = useQuery({ queryKey: keys.marketOverview, queryFn: () => api.get<MarketOverview>('/market/overview'), refetchInterval: 60_000 });
+  const status = data?.status;
+  const source = !status
+    ? ''
+    : status.simulated
+      ? 'Simulated market data for demonstration.'
+      : `Prices from ${status.source}${status.delayMinutes > 0 ? `, delayed ${status.delayMinutes} min` : ''}.`;
+  return (
+    <p className="border-t border-border px-5 py-3 text-[11px] leading-snug text-subtle">
+      {source} Paper trading with virtual money. Not investment advice.
+    </p>
   );
 }

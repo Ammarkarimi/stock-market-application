@@ -41,6 +41,8 @@ export default defineConfig({
       PORT: String(port),
       DATABASE_PATH: ':memory:',
       SEED_DEMO_DATA: 'true',
+      // Deterministic, offline prices with a market that never closes.
+      MARKET_DATA: 'simulated',
       COOKIE_SECURE: 'false',
       RATE_LIMIT: 'false',
     },

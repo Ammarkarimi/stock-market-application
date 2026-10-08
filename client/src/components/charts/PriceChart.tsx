@@ -158,7 +158,7 @@ export function PriceChart({ candles, mode, barSeconds, baseline, liveSymbol, he
     let time = last.time;
     let bar = { ...last };
     if (barSeconds) {
-      const bucket = (Math.floor(Date.now() / 1000 / barSeconds) * barSeconds + IST_OFFSET_SECONDS) as UTCTimestamp;
+      const bucket = (Math.floor(tick.time / barSeconds) * barSeconds + IST_OFFSET_SECONDS) as UTCTimestamp;
       if (typeof last.time === 'number' && bucket > last.time) {
         time = bucket;
         bar = { time, open: last.close, high: last.close, low: last.close, close: last.close };

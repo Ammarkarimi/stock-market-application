@@ -6,6 +6,7 @@ import { istDayEndIso, istDayStartIso } from '../lib/time.js';
 import { pageOf, type Page } from '../lib/validation.js';
 import { currentTradingDate, recordTradeVolume } from '../market/engine.js';
 import { circuitLimits, getQuote, getQuoteBySymbol, type LiveQuote } from '../market/quoteStore.js';
+import { isMarketOpen } from '../market/session.js';
 import { SYSTEM_ACTOR, type Actor } from './actor.js';
 import { audit, listAuditLogs } from './audit.service.js';
 import { calculateCharges, chargesToRupees, type ChargeBreakdown } from './charges.js';
@@ -238,7 +239,19 @@ function validateInput(input: OrderInput): ValidatedOrder {
   };
 }
 
+/** Why the current market session does not accept this order, or null when it does. */
+function sessionIssue(orderType: OrderType, validity: OrderValidity): string | null {
+  if (isMarketOpen()) return null;
+  if (orderType === 'MARKET') {
+    return 'The market is closed (NSE trades 9:15 am – 3:30 pm IST on weekdays). Place a limit order instead: it will wait for the market to open.';
+  }
+  if (validity === 'IOC') return 'The market is closed, so an IOC order cannot execute. Use a DAY limit order instead.';
+  return null;
+}
+
+/** Whether the order would execute right away. Nothing executes while the market is closed. */
 function isMarketable(order: { side: OrderSide; orderType: OrderType; limitPrice: number | null }, quote: LiveQuote): boolean {
+  if (!isMarketOpen()) return false;
   if (order.orderType === 'MARKET') return true;
   return order.side === 'BUY' ? order.limitPrice! >= quote.last : order.limitPrice! <= quote.last;
 }
@@ -277,6 +290,8 @@ export function previewOrder(userId: number, input: OrderInput): OrderPreview {
   const circuit = circuitLimits(quote);
   const issues: string[] = [];
   if (quote.tradingStatus !== 'ACTIVE') issues.push(`Trading in ${quote.symbol} is currently halted`);
+  const closed = sessionIssue(order.orderType, order.validity);
+  if (closed) issues.push(closed);
   if (order.limitPrice !== null && (order.limitPrice < circuit.lower || order.limitPrice > circuit.upper)) {
     issues.push(`Limit price must be between ${formatInr(circuit.lower)} and ${formatInr(circuit.upper)}`);
   }
@@ -512,7 +527,9 @@ function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, histor
 }
 
 export async function placeOrder(userId: number, input: OrderInput, pin: string | undefined, actor: Actor): Promise<OrderDto> {
-  validateInput(input);
+  const order = validateInput(input);
+  const closed = sessionIssue(order.orderType, order.validity);
+  if (closed) throw unprocessable('MARKET_CLOSED', closed);
   await verifyTransactionPin(userId, pin, actor, 'ORDER');
   return placeOrderConfirmed(userId, input, actor);
 }
@@ -595,6 +612,8 @@ export async function modifyOrder(
       validity: order.validity,
     });
     if (quote.tradingStatus !== 'ACTIVE') throw unprocessable('TRADING_HALTED', `Trading in ${quote.symbol} is halted`);
+    const closed = sessionIssue(next.orderType, next.validity);
+    if (closed) throw unprocessable('MARKET_CLOSED', closed);
     const { lower, upper } = circuitLimits(quote);
     if (next.limitPrice !== null && (next.limitPrice < lower || next.limitPrice > upper)) {
       throw badRequest(`Limit price must be between ${formatInr(lower)} and ${formatInr(upper)}`);
@@ -679,13 +698,32 @@ export function matchOpenOrders(changed: LiveQuote[]): number {
   return executed;
 }
 
-/** Expires DAY orders from previous sessions. Registered as a market rollover listener. */
+/** Expires DAY orders from previous sessions. Registered as a market rollover listener for the simulated market. */
 export function expireDayOrders(newDate: string): number {
-  const stale = all<OrderRow & { symbol: string }>(
-    `SELECT o.*, s.symbol FROM orders o JOIN securities s ON s.id = o.security_id
-      WHERE o.status = 'OPEN' AND o.validity = 'DAY' AND o.trading_date < ?`,
-    newDate,
+  return expireOrders(
+    all<OrderRow & { symbol: string }>(
+      `SELECT o.*, s.symbol FROM orders o JOIN securities s ON s.id = o.security_id
+        WHERE o.status = 'OPEN' AND o.validity = 'DAY' AND o.trading_date < ?`,
+      newDate,
+    ),
   );
+}
+
+/**
+ * Expires DAY orders placed before a live session ended (ISO time). Orders placed after the close are
+ * after-market orders and stay open for the next session.
+ */
+export function expireDayOrdersPlacedBefore(sessionEnd: string): number {
+  return expireOrders(
+    all<OrderRow & { symbol: string }>(
+      `SELECT o.*, s.symbol FROM orders o JOIN securities s ON s.id = o.security_id
+        WHERE o.status = 'OPEN' AND o.validity = 'DAY' AND o.created_at < ?`,
+      sessionEnd,
+    ),
+  );
+}
+
+function expireOrders(stale: (OrderRow & { symbol: string })[]): number {
   for (const order of stale) {
     transaction(() => {
       const now = nowIso();

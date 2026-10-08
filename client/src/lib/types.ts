@@ -122,8 +122,15 @@ export interface MarketBreadth {
 
 export interface MarketStatus {
   status: 'OPEN' | 'CLOSED';
+  phase: 'OPEN' | 'PRE_OPEN' | 'CLOSED';
   session: string;
   simulated: boolean;
+  /** 'Yahoo Finance' or 'Simulated'. */
+  source: string;
+  delayMinutes: number;
+  /** Exchange time of the latest live price. */
+  asOf: string | null;
+  feedError: string | null;
   live: boolean;
   tradingDate: string;
   tickIntervalMs: number;
@@ -152,6 +159,8 @@ export interface Position {
 }
 
 export interface SecurityDetail {
+  priceSource: 'live' | 'simulated';
+  financialsSource: 'reported' | 'illustrative' | null;
   quote: Quote;
   security: {
     symbol: string;

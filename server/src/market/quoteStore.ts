@@ -205,8 +205,8 @@ export function toQuoteDto(q: LiveQuote): QuoteDto {
   };
 }
 
-/** Compact tick payload for the live stream: [symbol, last, change, changePercent, high, low, volume]. */
-export type TickTuple = [string, number, number, number, number, number, number];
+/** Compact tick payload for the live stream: [symbol, last, change, changePercent, high, low, volume, time (s)]. */
+export type TickTuple = [string, number, number, number, number, number, number, number];
 
 export function toTickTuple(q: LiveQuote): TickTuple {
   return [
@@ -217,5 +217,7 @@ export function toTickTuple(q: LiveQuote): TickTuple {
     toRupees(q.high),
     toRupees(q.low),
     q.volume,
+    // Exchange time of the price, which lags the wall clock for delayed feeds and outside market hours.
+    Math.floor(q.updatedAt / 1000),
   ];
 }
