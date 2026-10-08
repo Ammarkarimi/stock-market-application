@@ -5,8 +5,32 @@ market and limit orders, track a live portfolio, apply for IPOs, manage funds, s
 the market. An admin panel manages users, securities, IPOs, orders and transactions, backed by a tamper-evident
 audit trail.
 
-> **All market data is simulated.** Prices, indices, IPO subscriptions and company financials are generated for
-> demonstration and are not investment advice. No real money moves: deposits and withdrawals are simulated too.
+> **Real prices, virtual money.** Stock, ETF, REIT and index prices, price history and company fundamentals come
+> from Yahoo Finance (NSE/BSE, delayed about 15 minutes). Trading is **paper trading**: orders execute inside the
+> app against those prices, and deposits and withdrawals move virtual money only. No order reaches an exchange.
+> IPOs are simulated. Not investment advice.
+
+## Market data
+
+| Data | Source |
+| ---- | ------ |
+| Prices, day range and volume of the 84 catalogued stocks, ETFs, REITs, InvITs and indices | Yahoo Finance, refreshed every 15 s while NSE is open (about 15 minutes delayed) |
+| Daily history (5 years) and 5-minute intraday bars | Yahoo Finance, loaded at startup |
+| EPS, book value, shares outstanding, dividends, ROE, debt/equity, beta, company description, annual revenue and profit | Yahoo Finance, refreshed daily |
+| Market hours | NSE's session as reported by Yahoo: open 9:15 am – 3:30 pm IST on trading days |
+| IPOs, and companies listed through them | Simulated |
+| Index constituent weights, founding year | Reference data in `server/src/market/catalog.ts` |
+
+While the market is closed, market and IOC orders are refused; DAY limit orders are accepted as after-market orders
+and execute when the price reaches them in the next session. DAY orders placed during a session expire at its close.
+
+If Yahoo Finance cannot be reached at startup, the server logs a warning and runs on simulated prices. Set
+`MARKET_DATA=simulated` to always use the simulator (a random-walk market that never closes), as the tests do.
+
+**Licensing.** Yahoo Finance's data is for personal, non-commercial use. Before launching commercially, replace
+[`server/src/market/yahoo.ts`](server/src/market/yahoo.ts) with a licensed feed: an authorised NSE/BSE data vendor
+(such as TrueData or Global Datafeeds) or a broker API (Zerodha Kite Connect, Upstox, Angel One SmartAPI). Real
+order execution likewise needs a SEBI-registered broker; see *Real trading* below.
 
 - User stories, acceptance criteria and traceability: [`docs/USER_STORIES.md`](docs/USER_STORIES.md)
 
@@ -58,6 +82,10 @@ In development the database is created at `server/data/stocksphere.db` and seede
 | Investor | `demo@example.com`  | `Demo@12345`  | `2468`          |
 | Admin    | `admin@example.com` | `Admin@12345` | `1357`          |
 
+Startup takes about 20 seconds the first time while five years of real price history download. If you created the
+database with an older, fully simulated version, run `npm run db:reset` once so the demo history is rebuilt at real
+prices.
+
 The demo investor has holdings, order history, IPO applications, watchlists and alerts. You can also register a
 new account, add money on the Funds page and set a transaction PIN under Profile → Security before trading.
 
@@ -91,7 +119,9 @@ The server reads environment variables, and `server/.env` when present (copy
 | `TRUST_PROXY` | `0` | Number of reverse-proxy hops to trust for the client IP |
 | `SESSION_IDLE_MINUTES` | `120` | Session expires after this long without activity |
 | `SESSION_MAX_HOURS` | `168` | Absolute session lifetime |
-| `MARKET_SIMULATION` | `true` | Run the simulated price feed |
+| `MARKET_DATA` | `yahoo` | `yahoo` for real (delayed) NSE/BSE prices, or `simulated` for the built-in market |
+| `LIVE_POLL_MS` | `15000` | How often live quotes are refreshed while the exchange is open |
+| `MARKET_SIMULATION` | `true` | Run the simulator (every security when simulated; otherwise only IPO listings and admin-added securities) |
 | `TICK_INTERVAL_MS` | `2000` | Interval between simulated price ticks |
 | `RATE_LIMIT` | `true` | Rate-limit the API and the authentication endpoints |
 
@@ -137,7 +167,7 @@ client/            React single-page app
 server/
   src/routes/      Express routers, one per API area
   src/services/    Business logic: auth, sessions, orders, funds, IPOs, alerts, notifications, audit
-  src/market/      Security catalogue, price simulation and IPO catalogue
+  src/market/      Security catalogue, live feed (Yahoo Finance), price simulation and IPO catalogue
   src/jobs/        Scheduler for the IPO lifecycle and session clean-up
   src/db/          SQLite connection and migrations
   tests/           API tests
@@ -146,9 +176,13 @@ docs/              User stories
 ```
 
 - **Money** is stored as integer paise and exposed by the API in rupees; dates follow Indian Standard Time.
-- **Market simulation**: prices follow a random walk with daily drift, bounded by circuit limits; indices are
-  computed from their weighted constituents and index ETFs track their index. The simulated market is open around
-  the clock, and the trading day rolls over at midnight IST, when DAY orders expire and daily candles are stored.
+- **Live prices**: one batched Yahoo Finance request refreshes every quote; each change runs order matching, price
+  alerts and the live stream exactly as a simulated tick would. A new session closes the previous trading day into
+  the daily history.
+- **Market simulation** (`MARKET_DATA=simulated`, and for securities not on the exchange): prices follow a random
+  walk with daily drift, bounded by circuit limits; indices are computed from their weighted constituents and index
+  ETFs track their index. The simulated market is open around the clock, and the trading day rolls over at midnight
+  IST, when DAY orders expire and daily candles are stored.
 - **Orders**: market orders fill at the last traded price; limit orders fill immediately when marketable,
   otherwise they stay open with funds blocked (buy) or shares reserved (sell) and fill when the price crosses the
   limit. Every fill posts ledger entries for the trade value and for its brokerage and charges.
@@ -178,6 +212,14 @@ and `/auth/me` requires a session.
 | Admin | `/admin/overview`, `/admin/users`, `/admin/securities`, `/admin/ipos`, `/admin/orders`, `/admin/trades`, `/admin/ledger`, `/admin/fund-transactions`, `/admin/audit-logs`, `/admin/settings`, `/admin/announcements` |
 
 Errors use one shape: `{ "error": { "code": "…", "message": "…", "details": { "fields": { … } } } }`.
+
+## Real trading
+
+StockSphere is a paper-trading platform. Taking real orders and real money in India requires a SEBI-registered
+stockbroker (with exchange memberships and a depository participant). The usual path for an app is to integrate a
+broker's API so users link their own trading and demat accounts and orders are placed through that broker, for
+example Zerodha Kite Connect, Upstox or Angel One SmartAPI. Funds would then stay with the broker; this app's wallet,
+ledger and order engine would become a view of the broker's records.
 
 ## Security
 

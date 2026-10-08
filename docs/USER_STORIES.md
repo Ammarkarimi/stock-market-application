@@ -12,7 +12,8 @@ Each story has a short list of acceptance criteria (AC) that the implementation 
 | Admin    | A platform operator with access to the admin panel                 |
 | System   | Automated processes (price feed, order matching, IPO lifecycle)    |
 
-> Market data is simulated. Prices, indices, subscription figures and company financials are illustrative only.
+> Prices, indices, history and company fundamentals are real NSE/BSE data from Yahoo Finance (about 15 minutes
+> delayed). Trading uses virtual money (paper trading), and IPOs are simulated.
 
 ---
 
