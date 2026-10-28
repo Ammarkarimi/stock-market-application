@@ -13,6 +13,23 @@ export function formatINR(value: number | null | undefined, options: { decimals?
   return `${sign}${formatted}`;
 }
 
+const moneyFormats = new Map<string, Intl.NumberFormat>();
+
+/** An amount in any currency: ₹1,23,456.78, $347.10, €12.30. Indian grouping for rupees. */
+export function formatMoney(value: number | null | undefined, currency: string): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  let format = moneyFormats.get(currency);
+  if (!format) {
+    try {
+      format = new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    } catch {
+      format = num2;
+    }
+    moneyFormats.set(currency, format);
+  }
+  return `${value < 0 ? '−' : ''}${format.format(Math.abs(value))}`;
+}
+
 /** 1,23,456.78 (no currency symbol) */
 export function formatPrice(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';

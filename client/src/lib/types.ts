@@ -160,6 +160,8 @@ export interface Position {
 
 export interface SecurityDetail {
   priceSource: 'live' | 'simulated';
+  /** Yahoo Finance ticker for the chart analyzer; null for companies that exist only in StockSphere. */
+  analysisSymbol: string | null;
   financialsSource: 'reported' | 'illustrative' | null;
   quote: Quote;
   security: {
@@ -600,4 +602,94 @@ export interface Settings {
   };
   funds: { minDeposit: number; maxDeposit: number; minWithdrawal: number; maxWithdrawal: number };
   trading: { maxOrderQuantity: number; ipoRetailLimit: number };
+}
+
+// ---- Chart analyzer ----
+
+export type AnalysisDirection = 'bullish' | 'bearish' | 'neutral';
+export type AnalysisAction = 'BUY' | 'WAIT' | 'AVOID';
+
+export interface AnalysisMatch {
+  symbol: string;
+  name: string;
+  exchange: string;
+  type: string;
+}
+
+export interface AnalysisBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface AnalysisPattern {
+  id: string;
+  name: string;
+  kind: 'chart' | 'candlestick' | 'breakout';
+  direction: AnalysisDirection;
+  status: 'confirmed' | 'forming' | null;
+  date: string;
+  description: string;
+  points: { date: string; price: number }[];
+  target: number | null;
+}
+
+export interface AnalysisSignal {
+  id: string;
+  group: 'trend' | 'momentum' | 'pattern' | 'candlestick' | 'volume' | 'position' | 'risk';
+  label: string;
+  detail: string;
+  direction: AnalysisDirection;
+  weight: number;
+}
+
+export interface AnalysisReading {
+  value: number | null;
+  reading: string;
+  direction: AnalysisDirection;
+}
+
+export interface AnalysisLinePoint {
+  time: string;
+  value: number;
+}
+
+export interface StockAnalysis {
+  symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  instrumentType: string;
+  price: { last: number; change: number; changePercent: number; asOf: string; fiftyTwoWeekHigh: number; fiftyTwoWeekLow: number };
+  verdict: { action: AnalysisAction; score: number; confidence: 'High' | 'Medium' | 'Low'; headline: string; summary: string };
+  levels: {
+    support: { price: number; touches: number }[];
+    resistance: { price: number; touches: number }[];
+    entry: number;
+    stopLoss: number;
+    target: number;
+    riskReward: number;
+  };
+  signals: AnalysisSignal[];
+  patterns: AnalysisPattern[];
+  indicators: {
+    rsi: AnalysisReading;
+    macd: AnalysisReading & { signal: number | null; histogram: number | null };
+    adx: AnalysisReading & { plusDi: number | null; minusDi: number | null };
+    bollinger: AnalysisReading & { upper: number | null; lower: number | null };
+    sma20: AnalysisReading;
+    sma50: AnalysisReading;
+    sma200: AnalysisReading;
+    volume: AnalysisReading;
+    range52w: AnalysisReading;
+    atr: AnalysisReading;
+  };
+  candles: AnalysisBar[];
+  overlays: Record<'sma20' | 'sma50' | 'sma200' | 'bbUpper' | 'bbLower', AnalysisLinePoint[]>;
+  bars: number;
+  dataSource: string;
+  generatedAt: string;
 }

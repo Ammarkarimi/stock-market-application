@@ -14,6 +14,7 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const MarketsPage = lazy(() => import('@/pages/MarketsPage'));
 const ExplorePage = lazy(() => import('@/pages/ExplorePage'));
 const SecurityPage = lazy(() => import('@/pages/SecurityPage'));
+const AnalyzePage = lazy(() => import('@/pages/AnalyzePage'));
 const PortfolioPage = lazy(() => import('@/pages/PortfolioPage'));
 const OrdersPage = lazy(() => import('@/pages/OrdersPage'));
 const WatchlistPage = lazy(() => import('@/pages/WatchlistPage'));
@@ -52,6 +53,8 @@ const router = createBrowserRouter([
       { path: '/markets', element: <MarketsPage /> },
       { path: '/explore', element: <ExplorePage /> },
       { path: '/stocks/:symbol', element: <SecurityPage /> },
+      { path: '/analyze', element: <AnalyzePage /> },
+      { path: '/analyze/:symbol', element: <AnalyzePage /> },
       { path: '/portfolio', element: <PortfolioPage /> },
       { path: '/orders', element: <OrdersPage /> },
       { path: '/watchlist', element: <WatchlistPage /> },

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellPlus, Check, ChevronDown, ExternalLink, Star, Trash2 } from 'lucide-react';
+import { BellPlus, Check, ChevronDown, ExternalLink, ScanSearch, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -8,7 +8,7 @@ import { ChangePill, LiveChange, LivePrice, useLiveQuote } from '@/components/ma
 import { MoversTable } from '@/components/market/MarketWidgets';
 import { useTrade } from '@/components/trade/TradeProvider';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorState, KeyValue, Menu, MenuItem } from '@/components/ui/Misc';
 import { PageLoader, Skeleton } from '@/components/ui/Spinner';
@@ -201,6 +201,11 @@ export default function SecurityPage() {
           <Button variant="secondary" icon={<BellPlus className="size-4" />} onClick={() => openAlert(upper)}>
             Alert
           </Button>
+          {detail.analysisSymbol && (
+            <ButtonLink to={`/analyze/${encodeURIComponent(detail.analysisSymbol)}`} icon={<ScanSearch className="size-4" />}>
+              Analyze chart
+            </ButtonLink>
+          )}
         </div>
       </div>
 
