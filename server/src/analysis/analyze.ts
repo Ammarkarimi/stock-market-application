@@ -56,6 +56,7 @@ interface LinePoint {
 
 const r2 = (value: number) => Math.round(value * 100) / 100;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const ago = (sessions: number) => (sessions === 0 ? 'today' : sessions === 1 ? '1 session ago' : `${sessions} sessions ago`);
 const dirOf = (weight: number): Direction => (weight > 0 ? 'bullish' : weight < 0 ? 'bearish' : 'neutral');
 
 function overlay(bars: Bar[], series: Series): LinePoint[] {
@@ -123,8 +124,8 @@ export function analyzeSeries(series: PriceSeries): Analysis {
   if (s50 != null && s200 != null) {
     const golden = crossedWithin(sma50, sma200, 30, 'above');
     const death = crossedWithin(sma50, sma200, 30, 'below');
-    if (golden !== null) add({ id: 'golden-cross', group: 'trend', label: 'Golden cross', detail: `The 50-day average crossed above the 200-day average ${golden === 0 ? 'today' : `${golden} sessions ago`}, a widely watched long-term buy signal.`, weight: 12 });
-    else if (death !== null) add({ id: 'death-cross', group: 'trend', label: 'Death cross', detail: `The 50-day average crossed below the 200-day average ${death === 0 ? 'today' : `${death} sessions ago`}, a widely watched long-term sell signal.`, weight: -12 });
+    if (golden !== null) add({ id: 'golden-cross', group: 'trend', label: 'Golden cross', detail: `The 50-day average crossed above the 200-day average ${ago(golden)}, a widely watched long-term buy signal.`, weight: 12 });
+    else if (death !== null) add({ id: 'death-cross', group: 'trend', label: 'Death cross', detail: `The 50-day average crossed below the 200-day average ${ago(death)}, a widely watched long-term sell signal.`, weight: -12 });
     else add({ id: 'sma-alignment', group: 'trend', label: s50 > s200 ? '50-day above 200-day average' : '50-day below 200-day average', detail: s50 > s200 ? 'The medium-term trend is above the long-term trend.' : 'The medium-term trend is below the long-term trend.', weight: s50 > s200 ? 6 : -6 });
   }
   if (s50 != null) {
@@ -164,8 +165,8 @@ export function analyzeSeries(series: PriceSeries): Analysis {
     const bearCross = crossedWithin(macdSeries.line, macdSeries.signal, 5, 'below');
     let weight = macdLine > macdSignal ? 6 : -6;
     let reading = macdLine > macdSignal ? 'MACD is above its signal line: momentum is rising' : 'MACD is below its signal line: momentum is falling';
-    if (bullCross !== null) [weight, reading] = [9, `Bullish MACD crossover ${bullCross === 0 ? 'today' : `${bullCross} sessions ago`}`];
-    else if (bearCross !== null) [weight, reading] = [-9, `Bearish MACD crossover ${bearCross === 0 ? 'today' : `${bearCross} sessions ago`}`];
+    if (bullCross !== null) [weight, reading] = [9, `Bullish MACD crossover ${ago(bullCross)}`];
+    else if (bearCross !== null) [weight, reading] = [-9, `Bearish MACD crossover ${ago(bearCross)}`];
     macdReading = { value: r2(macdLine), signal: r2(macdSignal), histogram: macdHist == null ? null : r2(macdHist), reading, direction: dirOf(weight) };
     add({ id: 'macd', group: 'momentum', label: bullCross !== null ? 'MACD bullish crossover' : bearCross !== null ? 'MACD bearish crossover' : macdLine > macdSignal ? 'MACD above signal' : 'MACD below signal', detail: `${reading}.`, weight });
   }
@@ -225,7 +226,9 @@ export function analyzeSeries(series: PriceSeries): Analysis {
     const obvSeries = obv(bars);
     const obvSlope = slope(obvSeries, 20);
     const priceSlope = slope(closes, 20);
-    const ratio = lastBar.volume / avgVolume20;
+    // A session still in progress can report no volume yet: use the latest bar that has some.
+    const latestVolume = [...bars].reverse().find((b) => b.volume > 0)?.volume ?? 0;
+    const ratio = latestVolume / avgVolume20;
     let weight = 0;
     let reading = `Volume ${ratio.toFixed(1)}× the 20-day average`;
     if (obvSlope > 0 && priceSlope > 0) [weight, reading] = [4, `${reading}; buying volume is confirming the rise (OBV rising)`];
