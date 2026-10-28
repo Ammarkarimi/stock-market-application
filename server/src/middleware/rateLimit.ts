@@ -22,3 +22,6 @@ export const authLimiter = limiter(15 * 60_000, 30, 'Too many attempts. Please w
 
 /** General API limit per client IP. */
 export const apiLimiter = limiter(60_000, 1200, 'Too many requests. Please slow down.');
+
+/** The chart analyzer calls an external data source, so it gets a tighter limit. */
+export const analysisLimiter = limiter(60_000, 60, 'Too many analysis requests. Please wait a minute and try again.');

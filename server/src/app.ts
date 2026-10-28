@@ -11,6 +11,7 @@ import { apiLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import adminRoutes from './routes/admin.routes.js';
 import alertsRoutes from './routes/alerts.routes.js';
+import analysisRoutes from './routes/analysis.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import fundsRoutes from './routes/funds.routes.js';
 import iposRoutes from './routes/ipos.routes.js';
@@ -80,6 +81,7 @@ export function createApp() {
   api.use('/alerts', requireAuth, alertsRoutes);
   api.use('/notifications', requireAuth, notificationsRoutes);
   api.use('/ipos', requireAuth, iposRoutes);
+  api.use('/analysis', requireAuth, analysisRoutes);
   api.use('/admin', requireAdmin, adminRoutes);
   api.use(notFoundHandler);
 
