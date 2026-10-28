@@ -1,8 +1,8 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { analyzeSeries } from '../src/analysis/analyze.js';
 import { atr, bollinger, ema, macd, rsi, sma } from '../src/analysis/indicators.js';
 import { candlestickPatterns, chartPatterns } from '../src/analysis/patterns.js';
-import { preferIndianListings, setMarketDataProvider, yahooProvider, type MarketDataProvider } from '../src/analysis/provider.js';
+import { createYahooProvider, preferIndianListings, setMarketDataProvider, yahooProvider, type MarketDataProvider } from '../src/analysis/provider.js';
 import { priceLevels, zigzag } from '../src/analysis/structure.js';
 import type { Bar, PriceSeries } from '../src/analysis/types.js';
 import { notFound } from '../src/lib/errors.js';
@@ -190,7 +190,6 @@ describe('verdict', () => {
 });
 
 describe('market data provider', () => {
-  afterEach(() => vi.restoreAllMocks());
 
   const yahooChart = {
     chart: {
@@ -207,8 +206,8 @@ describe('market data provider', () => {
   };
 
   it('parses daily bars in exchange time, skipping empty sessions and repeated dates', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(yahooChart), { status: 200 }));
-    const result = await yahooProvider.history('TCS.NS');
+    const provider = createYahooProvider(vi.fn().mockResolvedValue(new Response(JSON.stringify(yahooChart), { status: 200 })));
+    const result = await provider.history('TCS.NS');
     expect(result).toMatchObject({ symbol: 'TCS.NS', name: 'Tata Consultancy Services Limited', currency: 'INR', exchange: 'NSE', fiftyTwoWeekHigh: 4000 });
     expect(result.bars).toEqual([
       { date: '2026-10-01', open: 3500, high: 3550, low: 3480, close: 3520, volume: 1000 },
@@ -217,13 +216,19 @@ describe('market data provider', () => {
   });
 
   it('turns unknown symbols into 404s and outages into 503s', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const fetchMock = vi.fn();
+    const provider = createYahooProvider(fetchMock);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ chart: { result: null, error: { code: 'Not Found' } } }), { status: 404 }));
-    await expect(yahooProvider.history('NOPE')).rejects.toMatchObject({ status: 404 });
+    await expect(provider.history('NOPE')).rejects.toMatchObject({ status: 404 });
     fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
-    await expect(yahooProvider.history('TCS.NS')).rejects.toMatchObject({ status: 503, code: 'DATA_SOURCE_UNAVAILABLE' });
+    await expect(provider.history('TCS.NS')).rejects.toMatchObject({ status: 503, code: 'DATA_SOURCE_UNAVAILABLE' });
     fetchMock.mockResolvedValueOnce(new Response('<html>busy</html>', { status: 429 }));
-    await expect(yahooProvider.search('tcs')).rejects.toMatchObject({ status: 503 });
+    await expect(provider.search('tcs')).rejects.toMatchObject({ status: 503 });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ quotes: [{ symbol: 'TCS', quoteType: 'EQUITY', exchDisp: 'NYSE' }, { symbol: 'TCS.NS', longname: 'Tata Consultancy Services', quoteType: 'EQUITY', exchDisp: 'NSE' }, { symbol: 'TCSX', quoteType: 'OPTION' }] }), { status: 200 }),
+    );
+    expect((await provider.search('tcs')).map((m) => m.symbol)).toEqual(['TCS.NS', 'TCS']);
   });
 
   it('lists NSE and BSE listings ahead of foreign ones among the top matches', () => {

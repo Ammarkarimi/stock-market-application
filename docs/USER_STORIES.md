@@ -238,8 +238,9 @@ As an investor, I want to view my own activity log, so that I can spot anything 
 
 ## Epic 15 — Chart analysis
 
-> The analyzer uses **real** daily prices (Yahoo Finance), unlike the simulated trading market. Its verdict is a
-> rules-based technical signal for education, not investment advice.
+> The analyzer reads two years of real daily prices from Yahoo Finance for any listed stock, ETF or index, in India
+> or abroad, not only the stocks StockSphere trades. Its verdict is a rules-based technical signal for education, not
+> investment advice.
 
 **US-36 Analyze a stock by name**
 As an investor, I want to type a company name or symbol and get a chart analysis, so that I don't need to read charts myself.

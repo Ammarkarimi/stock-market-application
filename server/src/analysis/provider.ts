@@ -1,4 +1,5 @@
 import { AppError, notFound } from '../lib/errors.js';
+import { YahooError, YahooFinance, type FetchLike } from '../market/yahoo.js';
 import type { Bar, PriceSeries, SymbolMatch } from './types.js';
 
 /** Source of real daily price history and symbol search for the chart analyzer. */
@@ -11,105 +12,64 @@ export interface MarketDataProvider {
 const unavailable = () => new AppError(503, 'DATA_SOURCE_UNAVAILABLE', 'Market data is temporarily unavailable. Please try again in a minute.');
 
 const SEARCHABLE_TYPES = new Set(['EQUITY', 'ETF', 'INDEX']);
-const TIMEOUT_MS = 10_000;
 
-async function getJson(url: string): Promise<{ status: number; body: unknown }> {
-  let response: Response;
+/** Runs a Yahoo request, turning an unknown symbol into a 404 and anything else that fails into a 503. */
+async function upstream<T>(request: () => Promise<T>, symbol?: string): Promise<T> {
   try {
-    response = await fetch(url, {
-      headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; StockSphere/1.0)' },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch {
-    throw unavailable();
-  }
-  const text = await response.text();
-  try {
-    return { status: response.status, body: text ? JSON.parse(text) : null };
-  } catch {
+    return await request();
+  } catch (err) {
+    if (symbol && err instanceof YahooError && err.status === 404) throw notFound(`No price data found for ${symbol}`);
     throw unavailable();
   }
 }
 
-interface YahooChart {
-  chart?: {
-    result?: {
-      meta: {
-        symbol: string;
-        currency?: string;
-        fullExchangeName?: string;
-        exchangeName?: string;
-        instrumentType?: string;
-        longName?: string;
-        shortName?: string;
-        gmtoffset?: number;
-        fiftyTwoWeekHigh?: number;
-        fiftyTwoWeekLow?: number;
+/** Yahoo Finance chart and search endpoints, through the same client as the live market feed. */
+export function createYahooProvider(fetchImpl?: FetchLike): MarketDataProvider {
+  const yahoo = new YahooFinance(fetchImpl);
+  return {
+    name: 'Yahoo Finance',
+
+    async search(query) {
+      const quotes = await upstream(() => yahoo.search(query));
+      const matches = quotes
+        .filter((q) => q.symbol && q.quoteType && SEARCHABLE_TYPES.has(q.quoteType))
+        .map((q) => ({
+          symbol: q.symbol!,
+          name: q.longname ?? q.shortname ?? q.symbol!,
+          exchange: q.exchDisp ?? q.exchange ?? '',
+          type: q.quoteType!,
+        }));
+      return preferIndianListings(matches);
+    },
+
+    async history(symbol) {
+      const { meta, candles } = await upstream(() => yahoo.history(symbol, '2y', '1d'), symbol);
+      if (!meta) throw notFound(`No price data found for ${symbol}`);
+      const offset = meta.gmtoffset ?? 0;
+      const bars: Bar[] = [];
+      for (const c of candles) {
+        if (c.close <= 0) continue;
+        const date = new Date((c.time + offset) * 1000).toISOString().slice(0, 10);
+        const bar = { date, open: c.open, high: Math.max(c.high, c.open, c.close), low: Math.min(c.low, c.open, c.close), close: c.close, volume: c.volume };
+        // Keep one bar per day: a live session can repeat the last date.
+        if (bars.at(-1)?.date === date) bars[bars.length - 1] = bar;
+        else bars.push(bar);
+      }
+      return {
+        symbol: meta.symbol,
+        name: meta.longName ?? meta.shortName ?? meta.symbol,
+        exchange: meta.fullExchangeName ?? meta.exchangeName ?? '',
+        currency: meta.currency ?? 'USD',
+        instrumentType: meta.instrumentType ?? 'EQUITY',
+        fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? null,
+        fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? null,
+        bars,
       };
-      timestamp?: number[];
-      indicators: { quote: { open: (number | null)[]; high: (number | null)[]; low: (number | null)[]; close: (number | null)[]; volume: (number | null)[] }[] };
-    }[] | null;
-    error?: { code?: string; description?: string } | null;
+    },
   };
 }
 
-interface YahooSearch {
-  quotes?: { symbol?: string; shortname?: string; longname?: string; exchDisp?: string; exchange?: string; quoteType?: string }[];
-}
-
-/** Yahoo Finance's public chart and search endpoints (no API key). */
-export const yahooProvider: MarketDataProvider = {
-  name: 'Yahoo Finance',
-
-  async search(query) {
-    const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=10&newsCount=0&listsCount=0`;
-    const { status, body } = await getJson(url);
-    if (status !== 200) throw unavailable();
-    const matches = ((body as YahooSearch).quotes ?? [])
-      .filter((q) => q.symbol && q.quoteType && SEARCHABLE_TYPES.has(q.quoteType))
-      .map((q) => ({
-        symbol: q.symbol!,
-        name: q.longname ?? q.shortname ?? q.symbol!,
-        exchange: q.exchDisp ?? q.exchange ?? '',
-        type: q.quoteType!,
-      }));
-    return preferIndianListings(matches);
-  },
-
-  async history(symbol) {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=2y&interval=1d&includePrePost=false&events=div%2Csplits`;
-    const { status, body } = await getJson(url);
-    const chart = (body as YahooChart | null)?.chart;
-    const result = chart?.result?.[0];
-    if (status === 404 || (chart?.error && !result)) throw notFound(`No price data found for ${symbol}`);
-    if (status !== 200 || !result) throw unavailable();
-
-    const meta = result.meta;
-    const quote = result.indicators.quote[0];
-    const offset = meta.gmtoffset ?? 0;
-    const bars: Bar[] = [];
-    (result.timestamp ?? []).forEach((time, i) => {
-      const [open, high, low, close] = [quote?.open[i], quote?.high[i], quote?.low[i], quote?.close[i]];
-      // Holidays and halted sessions come back as nulls.
-      if (open == null || high == null || low == null || close == null || close <= 0) return;
-      const date = new Date((time + offset) * 1000).toISOString().slice(0, 10);
-      const bar = { date, open, high: Math.max(high, open, close), low: Math.min(low, open, close), close, volume: quote?.volume[i] ?? 0 };
-      // Keep one bar per day: a live session can repeat the last date.
-      if (bars.at(-1)?.date === date) bars[bars.length - 1] = bar;
-      else bars.push(bar);
-    });
-    return {
-      symbol: meta.symbol,
-      name: meta.longName ?? meta.shortName ?? meta.symbol,
-      exchange: meta.fullExchangeName ?? meta.exchangeName ?? '',
-      currency: meta.currency ?? 'USD',
-      instrumentType: meta.instrumentType ?? 'EQUITY',
-      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? null,
-      fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? null,
-      bars,
-    };
-  },
-};
+export const yahooProvider = createYahooProvider();
 
 /**
  * StockSphere is an Indian-market app: when the best matches include an NSE or BSE listing (for example

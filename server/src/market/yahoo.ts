@@ -74,6 +74,29 @@ export interface YahooAnnualFigure {
   netIncome: number | null;
 }
 
+export interface YahooChartMeta {
+  symbol: string;
+  currency?: string;
+  exchangeName?: string;
+  fullExchangeName?: string;
+  instrumentType?: string;
+  longName?: string;
+  shortName?: string;
+  /** Exchange time zone offset from UTC, in seconds. */
+  gmtoffset?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+}
+
+export interface YahooSearchResult {
+  symbol?: string;
+  shortname?: string;
+  longname?: string;
+  exchange?: string;
+  exchDisp?: string;
+  quoteType?: string;
+}
+
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 interface RawValue {
@@ -139,21 +162,34 @@ export class YahooFinance {
 
   /** OHLCV candles; bars with missing values (non-trading intervals) are skipped. */
   async chart(ticker: string, range: string, interval: string): Promise<YahooCandle[]> {
+    return (await this.history(ticker, range, interval)).candles;
+  }
+
+  /** Candles together with the instrument's name, exchange, currency and time zone. */
+  async history(ticker: string, range: string, interval: string): Promise<{ meta: YahooChartMeta | null; candles: YahooCandle[] }> {
     const body = await this.json<{
       chart: {
-        result: { timestamp?: number[]; indicators: { quote: { open: (number | null)[]; high: (number | null)[]; low: (number | null)[]; close: (number | null)[]; volume: (number | null)[] }[] } }[] | null;
+        result: { meta?: YahooChartMeta; timestamp?: number[]; indicators: { quote: { open: (number | null)[]; high: (number | null)[]; low: (number | null)[]; close: (number | null)[]; volume: (number | null)[] }[] } }[] | null;
       };
     }>(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}`);
     const result = body.chart.result?.[0];
     const quote = result?.indicators.quote[0];
-    if (!result?.timestamp || !quote) return [];
+    if (!result?.timestamp || !quote) return { meta: result?.meta ?? null, candles: [] };
     const candles: YahooCandle[] = [];
     result.timestamp.forEach((time, i) => {
       const [open, high, low, close] = [quote.open[i], quote.high[i], quote.low[i], quote.close[i]];
       if (open == null || high == null || low == null || close == null) return;
       candles.push({ time, open, high, low, close, volume: quote.volume[i] ?? 0 });
     });
-    return candles;
+    return { meta: result.meta ?? null, candles };
+  }
+
+  /** Listed instruments matching a company name or ticker, best match first. */
+  async search(query: string): Promise<YahooSearchResult[]> {
+    const body = await this.json<{ quotes?: YahooSearchResult[] }>(
+      `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=10&newsCount=0&listsCount=0`,
+    );
+    return body.quotes ?? [];
   }
 
   async profile(ticker: string): Promise<YahooProfile | null> {
