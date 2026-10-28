@@ -197,7 +197,9 @@ docs/              User stories
   on the swings and candlestick patterns on the last five bars; `analyze.ts` turns each finding into a weighted
   signal and sums them into a score from −100 to +100: **Buy** at +25 or more, **Avoid** at −20 or less, otherwise
   **Wait** (also when an uptrend is overbought, RSI 75+). The stop-loss sits half an ATR below the nearest support
-  (between one and three ATRs below the price), and the target is the next resistance.
+  (between one and three ATRs below the price), and the target is the next resistance. While the exchange is
+  trading (from Yahoo's session times), the last candle is today's unfinished session: trend and momentum use its
+  latest price, while candlestick patterns and volume are read from completed sessions only.
 - **Real-time updates**: the server pushes quotes, order updates, notifications and session revocations over
   `GET /api/stream`. Events are emitted only after their database transaction commits.
 

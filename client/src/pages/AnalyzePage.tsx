@@ -223,7 +223,7 @@ function VerdictCard({ analysis }: { analysis: StockAnalysis }) {
           <ScoreBar score={verdict.score} />
         </div>
         <div className="divide-y divide-border">
-          <KeyValue label="Entry (last close)" value={money(levels.entry)} />
+          <KeyValue label={price.sessionInProgress ? 'Entry (latest price)' : 'Entry (last close)'} value={money(levels.entry)} />
           <KeyValue label="Stop-loss" value={<span className="text-loss">{money(levels.stopLoss)} <span className="text-xs text-muted">({pctFrom(levels.stopLoss)})</span></span>} />
           <KeyValue label="Target" value={<span className="text-gain">{money(levels.target)} <span className="text-xs text-muted">({pctFrom(levels.target)})</span></span>} />
           <KeyValue label="Reward : risk" value={`${levels.riskReward.toFixed(1)} : 1`} />
@@ -382,15 +382,22 @@ function AnalysisResult({ analysis }: { analysis: StockAnalysis }) {
             <h2 className="text-xl font-semibold tracking-tight text-fg sm:text-2xl">{analysis.name}</h2>
             <Badge>{analysis.symbol}</Badge>
             {analysis.instrumentType !== 'EQUITY' && <Badge tone="info">{analysis.instrumentType}</Badge>}
+            {price.sessionInProgress && <Badge tone="warning">Session in progress</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted">
             {analysis.exchange} · {analysis.currency} · daily chart, {formatNumber(analysis.bars)} sessions to {formatDate(price.asOf)}
           </p>
+          {price.sessionInProgress && (
+            <p className="mt-1 max-w-2xl text-xs text-muted">
+              Today's candle is still forming. Trend and momentum use the latest price (about 15 minutes delayed); candlestick patterns and volume use
+              completed sessions only. The verdict can change before the close.
+            </p>
+          )}
         </div>
         <div className="text-right">
           <p className="num text-3xl font-semibold tracking-tight text-fg">{formatMoney(price.last, analysis.currency)}</p>
           <p className={cn('num text-sm font-medium', price.change >= 0 ? 'text-gain' : 'text-loss')}>
-            {formatChange(price.change)} ({formatPercent(price.changePercent)}) <span className="font-normal text-muted">last session</span>
+            {formatChange(price.change)} ({formatPercent(price.changePercent)}) <span className="font-normal text-muted">{price.sessionInProgress ? 'today so far' : 'last session'}</span>
           </p>
         </div>
       </div>
@@ -425,7 +432,7 @@ function AnalysisResult({ analysis }: { analysis: StockAnalysis }) {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <Card>
-          <CardHeader title="Patterns found" subtitle="Chart patterns from the swing highs and lows, and candlesticks from the last five sessions" />
+          <CardHeader title="Patterns found" subtitle={`Chart patterns from the swing highs and lows, and candlesticks from the last five ${analysis.price.sessionInProgress ? 'completed ' : ''}sessions`} />
           <PatternList patterns={analysis.patterns} currency={analysis.currency} />
         </Card>
         <Card>

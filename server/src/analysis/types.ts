@@ -17,6 +17,8 @@ export interface PriceSeries {
   instrumentType: string;
   fiftyTwoWeekHigh: number | null;
   fiftyTwoWeekLow: number | null;
+  /** The last bar is today's session, still trading: its candle is not final. */
+  sessionInProgress: boolean;
   bars: Bar[];
 }
 

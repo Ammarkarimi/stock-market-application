@@ -24,7 +24,7 @@ async function upstream<T>(request: () => Promise<T>, symbol?: string): Promise<
 }
 
 /** Yahoo Finance chart and search endpoints, through the same client as the live market feed. */
-export function createYahooProvider(fetchImpl?: FetchLike): MarketDataProvider {
+export function createYahooProvider(fetchImpl?: FetchLike, now: () => number = Date.now): MarketDataProvider {
   const yahoo = new YahooFinance(fetchImpl);
   return {
     name: 'Yahoo Finance',
@@ -46,10 +46,11 @@ export function createYahooProvider(fetchImpl?: FetchLike): MarketDataProvider {
       const { meta, candles } = await upstream(() => yahoo.history(symbol, '2y', '1d'), symbol);
       if (!meta) throw notFound(`No price data found for ${symbol}`);
       const offset = meta.gmtoffset ?? 0;
+      const localDate = (seconds: number) => new Date((seconds + offset) * 1000).toISOString().slice(0, 10);
       const bars: Bar[] = [];
       for (const c of candles) {
         if (c.close <= 0) continue;
-        const date = new Date((c.time + offset) * 1000).toISOString().slice(0, 10);
+        const date = localDate(c.time);
         const bar = { date, open: c.open, high: Math.max(c.high, c.open, c.close), low: Math.min(c.low, c.open, c.close), close: c.close, volume: c.volume };
         // Keep one bar per day: a live session can repeat the last date.
         if (bars.at(-1)?.date === date) bars[bars.length - 1] = bar;
@@ -63,10 +64,21 @@ export function createYahooProvider(fetchImpl?: FetchLike): MarketDataProvider {
         instrumentType: meta.instrumentType ?? 'EQUITY',
         fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? null,
         fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? null,
+        sessionInProgress: sessionInProgress(meta.currentTradingPeriod?.regular, bars.at(-1)?.date, localDate, now()),
         bars,
       };
     },
   };
+}
+
+/**
+ * Whether the last bar belongs to a regular session that is trading right now. Yahoo reports the current session,
+ * or the next one outside trading hours, so a bar from an earlier date is always complete.
+ */
+function sessionInProgress(regular: { start: number; end: number } | undefined, lastDate: string | undefined, localDate: (seconds: number) => string, nowMs: number): boolean {
+  if (!regular || !lastDate) return false;
+  const nowSeconds = nowMs / 1000;
+  return nowSeconds >= regular.start && nowSeconds < regular.end && localDate(regular.start) === lastDate;
 }
 
 export const yahooProvider = createYahooProvider();

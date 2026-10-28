@@ -71,7 +71,16 @@ export function AnalysisChart({ analysis, range, layers, height = 420 }: { analy
     }
 
     const price = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, wickUpColor: gain, wickDownColor: loss, borderVisible: false });
-    price.setData(candles.map((c) => ({ time: c.date as Time, open: c.open, high: c.high, low: c.low, close: c.close })));
+    const live = analysis.price.sessionInProgress;
+    price.setData(
+      candles.map((c, i) => {
+        const bar = { time: c.date as Time, open: c.open, high: c.high, low: c.low, close: c.close };
+        if (!live || i < candles.length - 1) return bar;
+        // Today's unfinished candle is drawn faded.
+        const color = `${c.close >= c.open ? gain : loss}80`;
+        return { ...bar, color, wickColor: color };
+      }),
+    );
 
     const line = (points: { time: string; value: number }[], color: string, options: { width?: 1 | 2; style?: LineStyle } = {}) => {
       const series = chart.addSeries(LineSeries, {
@@ -144,7 +153,10 @@ export function AnalysisChart({ analysis, range, layers, height = 420 }: { analy
       <div ref={containerRef} className="absolute inset-0" aria-label={`Price chart for ${analysis.name}`} role="img" />
       {hover && (
         <div className="num pointer-events-none absolute left-2 top-1 z-10 flex flex-wrap gap-x-3 rounded-md bg-surface/85 px-2 py-1 text-[11px] text-muted backdrop-blur-sm">
-          <span className="font-medium text-fg">{formatDate(hover.date)}</span>
+          <span className="font-medium text-fg">
+            {formatDate(hover.date)}
+            {analysis.price.sessionInProgress && hover.date === analysis.candles.at(-1)?.date && ' (in progress)'}
+          </span>
           <span>O {formatPrice(hover.open)}</span>
           <span>H {formatPrice(hover.high)}</span>
           <span>L {formatPrice(hover.low)}</span>

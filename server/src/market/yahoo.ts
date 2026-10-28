@@ -86,6 +86,8 @@ export interface YahooChartMeta {
   gmtoffset?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
+  /** Times (seconds since the epoch) of the current or next regular session. */
+  currentTradingPeriod?: { regular?: { start: number; end: number } };
 }
 
 export interface YahooSearchResult {

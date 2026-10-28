@@ -663,7 +663,16 @@ export interface StockAnalysis {
   exchange: string;
   currency: string;
   instrumentType: string;
-  price: { last: number; change: number; changePercent: number; asOf: string; fiftyTwoWeekHigh: number; fiftyTwoWeekLow: number };
+  price: {
+    last: number;
+    change: number;
+    changePercent: number;
+    asOf: string;
+    fiftyTwoWeekHigh: number;
+    fiftyTwoWeekLow: number;
+    /** Today's session is still trading: the last candle is live and not final. */
+    sessionInProgress: boolean;
+  };
   verdict: { action: AnalysisAction; score: number; confidence: 'High' | 'Medium' | 'Low'; headline: string; summary: string };
   levels: {
     support: { price: number; touches: number }[];

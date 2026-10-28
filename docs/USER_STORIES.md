@@ -254,6 +254,8 @@ As an investor, I want the analyzer to find chart and candlestick patterns, so t
 - Detects chart patterns: double top and bottom, head and shoulders (and inverse), and ascending, descending and symmetrical triangles.
 - Detects recent candlestick patterns: engulfing, hammer, shooting star, morning and evening star, three soldiers and crows, doji.
 - Each pattern is marked on the chart and explained in plain language with its date and whether it is bullish or bearish.
+- While the exchange is trading, today's candle is labelled as in progress and drawn faded: trend and momentum use the
+  latest price, but candlestick patterns and volume use completed sessions only, so a pattern cannot vanish by the close.
 
 **US-38 Buy or not verdict**
 As an investor, I want a clear verdict on whether to buy, so that I can act on the analysis.

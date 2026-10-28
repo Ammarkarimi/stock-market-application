@@ -34,8 +34,8 @@ function path(waypoints: [number, number][], noise = 0.002): Bar[] {
   return bars;
 }
 
-function series(bars: Bar[], symbol = 'ACME.NS'): PriceSeries {
-  return { symbol, name: 'Acme Ltd', exchange: 'NSE', currency: 'INR', instrumentType: 'EQUITY', fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null, bars };
+function series(bars: Bar[], symbol = 'ACME.NS', sessionInProgress = false): PriceSeries {
+  return { symbol, name: 'Acme Ltd', exchange: 'NSE', currency: 'INR', instrumentType: 'EQUITY', fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null, sessionInProgress, bars };
 }
 
 function patternsOf(bars: Bar[]) {
@@ -144,6 +144,35 @@ describe('candlestick patterns', () => {
   });
 });
 
+describe('a session still trading', () => {
+  // A year of steady decline, then today's candle so far: a hammer on a fraction of a normal day's volume.
+  const withHammerToday = () => {
+    const bars = path([[0, 200], [230, 170], [250, 150]]);
+    const c = bars.at(-1)!.close;
+    bars.push({ date: '2025-12-01', open: c, high: c * 1.006, low: c * 0.95, close: c * 1.005, volume: 50_000 });
+    return bars;
+  };
+
+  it('reads candlesticks from completed sessions only, but prices from the live candle', () => {
+    const live = analyzeSeries(series(withHammerToday(), 'ACME.NS', true));
+    expect(live.price.sessionInProgress).toBe(true);
+    expect(live.patterns.some((p) => p.id === 'hammer')).toBe(false);
+    expect(live.price.last).toBeCloseTo(withHammerToday().at(-1)!.close, 2);
+    expect(live.candles).toHaveLength(withHammerToday().length);
+
+    const closed = analyzeSeries(series(withHammerToday(), 'ACME.NS', false));
+    expect(closed.price.sessionInProgress).toBe(false);
+    expect(closed.patterns.find((p) => p.id === 'hammer')).toMatchObject({ date: '2025-12-01', direction: 'bullish' });
+  });
+
+  it('compares volume over completed sessions, not against the partial day', () => {
+    const live = analyzeSeries(series(withHammerToday(), 'ACME.NS', true));
+    expect(live.indicators.volume.value).toBeCloseTo(1, 1);
+    const closed = analyzeSeries(series(withHammerToday(), 'ACME.NS', false));
+    expect(closed.indicators.volume.value).toBeCloseTo(0.05, 2);
+  });
+});
+
 describe('verdict', () => {
   // Steady trends with regular pullbacks.
   const trend = (from: number, to: number) => {
@@ -213,6 +242,23 @@ describe('market data provider', () => {
       { date: '2026-10-01', open: 3500, high: 3550, low: 3480, close: 3520, volume: 1000 },
       { date: '2026-10-03', open: 3520, high: 3570, low: 3505, close: 3555, volume: 0 },
     ]);
+  });
+
+  it('marks the last bar as in progress only while its session is trading', async () => {
+    // The 3 Oct session runs 09:15–15:30 IST (03:45–10:00 UTC).
+    const regular = { start: Date.UTC(2026, 9, 3, 3, 45) / 1000, end: Date.UTC(2026, 9, 3, 10, 0) / 1000 };
+    const chart = (period: typeof regular) => {
+      const body = structuredClone(yahooChart);
+      Object.assign(body.chart.result[0]!.meta, { currentTradingPeriod: { regular: period } });
+      return vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status: 200 }));
+    };
+    const at = (iso: string) => () => Date.parse(iso);
+    expect((await createYahooProvider(chart(regular), at('2026-10-03T06:00:00Z')).history('TCS.NS')).sessionInProgress).toBe(true);
+    expect((await createYahooProvider(chart(regular), at('2026-10-03T10:30:00Z')).history('TCS.NS')).sessionInProgress).toBe(false);
+    expect((await createYahooProvider(chart(regular), at('2026-10-03T03:00:00Z')).history('TCS.NS')).sessionInProgress).toBe(false);
+    // Outside trading hours Yahoo reports the next session, which has no bar yet.
+    const next = { start: regular.start + 86_400 * 3, end: regular.end + 86_400 * 3 };
+    expect((await createYahooProvider(chart(next), at('2026-10-06T05:00:00Z')).history('TCS.NS')).sessionInProgress).toBe(false);
   });
 
   it('turns unknown symbols into 404s and outages into 503s', async () => {

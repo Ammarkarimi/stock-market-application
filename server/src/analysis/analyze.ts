@@ -14,7 +14,16 @@ export interface Analysis {
   exchange: string;
   currency: string;
   instrumentType: string;
-  price: { last: number; change: number; changePercent: number; asOf: string; fiftyTwoWeekHigh: number; fiftyTwoWeekLow: number };
+  price: {
+    last: number;
+    change: number;
+    changePercent: number;
+    asOf: string;
+    fiftyTwoWeekHigh: number;
+    fiftyTwoWeekLow: number;
+    /** The last candle is today's session, still trading: its price is live, its shape and volume are not final. */
+    sessionInProgress: boolean;
+  };
   verdict: { action: Action; score: number; confidence: 'High' | 'Medium' | 'Low'; headline: string; summary: string };
   levels: {
     support: { price: number; touches: number }[];
@@ -102,8 +111,11 @@ export function analyzeSeries(series: PriceSeries): Analysis {
   const atrSeries = atr(bars);
   const atrNow = last(atrSeries) ?? close * 0.02;
   const atrPct = atrNow / close;
-  const hasVolume = bars.slice(-20).some((b) => b.volume > 0);
-  const avgVolume20 = bars.slice(-21, -1).reduce((s, b) => s + b.volume, 0) / 20;
+  // Trend and momentum use today's live price, but a candle's shape and a day's volume are only final at the
+  // close: candlestick patterns and volume readings use completed sessions.
+  const completed = series.sessionInProgress ? bars.slice(0, -1) : bars;
+  const hasVolume = completed.slice(-20).some((b) => b.volume > 0);
+  const avgVolume20 = completed.slice(-21, -1).reduce((s, b) => s + b.volume, 0) / 20;
   const year = bars.slice(-252);
   const high52 = series.fiftyTwoWeekHigh ?? Math.max(...year.map((b) => b.high));
   const low52 = series.fiftyTwoWeekLow ?? Math.min(...year.map((b) => b.low));
@@ -194,7 +206,7 @@ export function analyzeSeries(series: PriceSeries): Analysis {
   // ---- Patterns ----
   const patterns = [
     ...chartPatterns({ bars, pivots, tolerance, maxAge: 60 }, levels, avgVolume20),
-    ...candlestickPatterns(bars, 5),
+    ...candlestickPatterns(completed, 5),
   ];
   let candleTotal = 0;
   for (const pattern of patterns) {
@@ -223,11 +235,10 @@ export function analyzeSeries(series: PriceSeries): Analysis {
   // ---- Volume ----
   let volumeReading: Reading = { value: null, reading: 'No volume data for this instrument', direction: 'neutral' };
   if (hasVolume && avgVolume20 > 0) {
-    const obvSeries = obv(bars);
-    const obvSlope = slope(obvSeries, 20);
-    const priceSlope = slope(closes, 20);
-    // A session still in progress can report no volume yet: use the latest bar that has some.
-    const latestVolume = [...bars].reverse().find((b) => b.volume > 0)?.volume ?? 0;
+    const obvSlope = slope(obv(completed), 20);
+    const priceSlope = slope(completed.map((b) => b.close), 20);
+    // Some markets report a final session with no volume: use the latest bar that has some.
+    const latestVolume = [...completed].reverse().find((b) => b.volume > 0)?.volume ?? 0;
     const ratio = latestVolume / avgVolume20;
     let weight = 0;
     let reading = `Volume ${ratio.toFixed(1)}× the 20-day average`;
@@ -318,6 +329,7 @@ export function analyzeSeries(series: PriceSeries): Analysis {
       change: r2(close - prevClose),
       changePercent: r2(((close - prevClose) / prevClose) * 100),
       asOf: lastBar.date,
+      sessionInProgress: series.sessionInProgress,
       fiftyTwoWeekHigh: r2(high52),
       fiftyTwoWeekLow: r2(low52),
     },
