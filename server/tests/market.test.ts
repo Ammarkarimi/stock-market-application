@@ -52,8 +52,11 @@ describe('market data API', () => {
     expect(res.body.metrics.week52High).toBeGreaterThanOrEqual(res.body.metrics.week52Low);
     expect(res.body.financials).toHaveLength(5);
     expect(res.body.memberOf.map((m: { symbol: string }) => m.symbol)).toContain('NIFTY50');
+    expect(res.body.analysisSymbol).toBe('RELIANCE.NS');
     const special = await client.get(`/api/securities/${encodeURIComponent('M&M')}`);
     expect(special.status).toBe(200);
+    expect(special.body.analysisSymbol).toBe('M&M.NS');
+    expect((await client.get('/api/securities/NIFTY50')).body.analysisSymbol).toBe('^NSEI');
     expect((await client.get('/api/securities/NOPE')).status).toBe(404);
   });
 

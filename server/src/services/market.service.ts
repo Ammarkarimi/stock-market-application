@@ -17,7 +17,9 @@ import {
   type QuoteDto,
   type SecurityType,
 } from '../market/quoteStore.js';
+import { FUNDS, INDICES, STOCKS } from '../market/catalog.js';
 import { marketSession } from '../market/session.js';
+import { yahooTicker } from '../market/yahoo.js';
 
 export const SECURITY_TYPES: SecurityType[] = ['STOCK', 'ETF', 'REIT', 'INVIT', 'INDEX'];
 
@@ -235,9 +237,14 @@ function reportedFinancials(securityId: number) {
   }));
 }
 
+/** Securities from the reference catalogue are real listings; IPO companies are not. */
+const CATALOGUED_SYMBOLS = new Set([...STOCKS, ...FUNDS, ...INDICES].map((s) => s.symbol));
+
 export interface SecurityDetail {
   /** Whether prices come from the exchange (via the live feed) or from the simulator. */
   priceSource: 'live' | 'simulated';
+  /** Yahoo Finance ticker for the chart analyzer, or null for companies that only exist in StockSphere (IPOs). */
+  analysisSymbol: string | null;
   /** Reported annual results, or illustrative figures derived from the reference data. */
   financialsSource: 'reported' | 'illustrative' | null;
   quote: QuoteDto;
@@ -317,6 +324,7 @@ export function getSecurityDetail(symbol: string): SecurityDetail {
   const financials = reported.length > 0 ? reported : syntheticFinancials(row);
   return {
     priceSource: isExternallyPriced(quote.securityId) ? 'live' : 'simulated',
+    analysisSymbol: CATALOGUED_SYMBOLS.has(row.symbol) ? yahooTicker(row.symbol) : null,
     financialsSource: financials.length === 0 ? null : reported.length > 0 ? 'reported' : 'illustrative',
     quote: toQuoteDto(quote),
     security: {
