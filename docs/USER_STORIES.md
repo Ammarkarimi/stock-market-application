@@ -236,6 +236,36 @@ As an admin, I want an immutable audit trail of user and system activity, so tha
 **US-35 Account activity**
 As an investor, I want to view my own activity log, so that I can spot anything suspicious.
 
+## Epic 15 — Chart analysis
+
+> The analyzer uses **real** daily prices (Yahoo Finance), unlike the simulated trading market. Its verdict is a
+> rules-based technical signal for education, not investment advice.
+
+**US-36 Analyze a stock by name**
+As an investor, I want to type a company name or symbol and get a chart analysis, so that I don't need to read charts myself.
+- Type-ahead suggestions show matching listed stocks and ETFs with their exchange (NSE, BSE, NASDAQ, …).
+- Pressing Enter on free text analyzes the best match; an unknown name shows a clear message.
+- The analysis uses up to two years of real daily prices; prices are shown in the stock's own currency.
+
+**US-37 Pattern detection**
+As an investor, I want the analyzer to find chart and candlestick patterns, so that I can see what the graph is showing.
+- Detects the trend (moving averages, higher highs and lows), support and resistance levels, breakouts and breakdowns.
+- Detects chart patterns: double top and bottom, head and shoulders (and inverse), and ascending, descending and symmetrical triangles.
+- Detects recent candlestick patterns: engulfing, hammer, shooting star, morning and evening star, three soldiers and crows, doji.
+- Each pattern is marked on the chart and explained in plain language with its date and whether it is bullish or bearish.
+
+**US-38 Buy or not verdict**
+As an investor, I want a clear verdict on whether to buy, so that I can act on the analysis.
+- The verdict is Buy, Wait or Avoid, with a score from −100 to +100 and a confidence level.
+- Every signal that contributed is listed as a bullish or bearish reason with its weight.
+- Shows an entry reference, a stop-loss, a target and the risk-to-reward ratio.
+- A disclaimer states that the verdict is not investment advice.
+
+**US-39 Indicators**
+As an investor, I want the key indicators behind the verdict, so that I can check the reasoning.
+- Shows RSI, MACD, ADX, Bollinger Bands, moving averages (20, 50, 200), volume trend and the position within the 52-week range, each with an interpretation.
+- The chart overlays the moving averages and the support and resistance levels.
+
 ---
 
 ## Traceability
@@ -280,3 +310,7 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-33 Application data | `/admin`, `/admin/settings` | `GET /admin/overview`, `/admin/settings`, `POST /admin/announcements` | admin | — |
 | US-34 Audit trail | `/admin/audit` | `GET /admin/audit-logs`, `GET /admin/audit-logs/verify` | auth, admin, demo-seed | admin |
 | US-35 Account activity | `/profile?tab=activity` | `GET /profile/activity` | auth | — |
+| US-36 Analyze a stock by name | `/analyze` | `GET /analysis/search`, `GET /analysis/:symbol` | analysis | analyzer |
+| US-37 Pattern detection | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
+| US-38 Buy or not verdict | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
+| US-39 Indicators | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
