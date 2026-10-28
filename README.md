@@ -18,6 +18,7 @@ audit trail.
 | Daily history (5 years) and 5-minute intraday bars | Yahoo Finance, loaded at startup |
 | EPS, book value, shares outstanding, dividends, ROE, debt/equity, beta, company description, annual revenue and profit | Yahoo Finance, refreshed daily |
 | Market hours | NSE's session as reported by Yahoo: open 9:15 am – 3:30 pm IST on trading days |
+| Chart analyzer: two years of daily prices for any listed stock, ETF or index worldwide, and symbol search | Yahoo Finance, on demand, cached for 10 minutes |
 | IPOs, and companies listed through them | Simulated |
 | Index constituent weights, founding year | Reference data in `server/src/market/catalog.ts` |
 
@@ -51,6 +52,7 @@ order execution likewise needs a SEBI-registered broker; see *Real trading* belo
 | Funds | Add money (UPI, net banking, card) and withdraw to a bank account; total, available, blocked and withdrawable balances | US-25 – US-27 |
 | Statements | Ledger with opening and closing balances, running balance and filters; CSV export of the ledger and trades | US-28 |
 | Admin panel | Users (suspend, unlock, sign out everywhere, adjust funds), securities (edit, halt, reprice), IPOs (create, allot, list, withdraw), orders, transactions, platform settings and announcements | US-29 – US-33 |
+| Chart analyzer | Type any stock name (Indian or foreign): the analyzer reads its real chart, finds trend, momentum, chart and candlestick patterns, support and resistance, and says **Buy**, **Wait** or **Avoid** with a score, the reasons, a stop-loss and a target | US-36 – US-39 |
 | Audit trail | Append-only, hash-chained log of every user, admin and system action, with filters and an integrity check; each investor sees their own activity | US-34, US-35 |
 
 ## Tech stack
@@ -168,6 +170,7 @@ server/
   src/routes/      Express routers, one per API area
   src/services/    Business logic: auth, sessions, orders, funds, IPOs, alerts, notifications, audit
   src/market/      Security catalogue, live feed (Yahoo Finance), price simulation and IPO catalogue
+  src/analysis/    Chart analyzer: indicators, swing structure, pattern detection and the verdict
   src/jobs/        Scheduler for the IPO lifecycle and session clean-up
   src/db/          SQLite connection and migrations
   tests/           API tests
@@ -188,6 +191,13 @@ docs/              User stories
   limit. Every fill posts ledger entries for the trade value and for its brokerage and charges.
 - **IPOs** move from upcoming to open, closed, allotted and listed on their scheduled dates. Oversubscribed
   issues are allotted by lottery, unallotted amounts are released, and shares are credited on listing.
+- **Chart analyzer** (`server/src/analysis/`): pure functions over daily bars. `indicators.ts` computes moving
+  averages, RSI, MACD, ADX, Bollinger Bands, ATR and on-balance volume; `structure.ts` finds swing highs and lows
+  with a volatility-scaled zigzag and clusters them into support and resistance; `patterns.ts` matches chart patterns
+  on the swings and candlestick patterns on the last five bars; `analyze.ts` turns each finding into a weighted
+  signal and sums them into a score from −100 to +100: **Buy** at +25 or more, **Avoid** at −20 or less, otherwise
+  **Wait** (also when an uptrend is overbought, RSI 75+). The stop-loss sits half an ATR below the nearest support
+  (between one and three ATRs below the price), and the target is the next resistance.
 - **Real-time updates**: the server pushes quotes, order updates, notifications and session revocations over
   `GET /api/stream`. Events are emitted only after their database transaction commits.
 
@@ -208,6 +218,7 @@ and `/auth/me` requires a session.
 | Watchlists and alerts | `/watchlists` (create, rename, delete, add and remove items); `/alerts` (create, update, delete) |
 | Notifications | `GET /notifications`, `/notifications/unread-count`; `POST /notifications/:id/read`, `/notifications/read-all`; `DELETE /notifications/:id` |
 | IPOs | `GET /ipos`, `/ipos/:id`, `/ipos/applications`; `POST /ipos/:id/apply`, `/ipos/applications/:id/cancel` |
+| Chart analyzer | `GET /analysis/search?q=`, `GET /analysis/:symbol` (a Yahoo Finance ticker such as `RELIANCE.NS`, `AAPL` or `^NSEI`) |
 | Live updates | `GET /stream` (Server-Sent Events) |
 | Admin | `/admin/overview`, `/admin/users`, `/admin/securities`, `/admin/ipos`, `/admin/orders`, `/admin/trades`, `/admin/ledger`, `/admin/fund-transactions`, `/admin/audit-logs`, `/admin/settings`, `/admin/announcements` |
 
@@ -244,8 +255,9 @@ npm run typecheck
 ```
 
 The end-to-end tests start the built server on port 4300 (override with `E2E_PORT`) with an in-memory database
-and demo data, and drive Chromium through registration, trading, funds, watchlists and alerts, IPOs and the admin
-panel. If Playwright's browser is not installed, run `npx playwright install chromium`, or point
+and demo data, and drive Chromium through registration, trading, funds, watchlists and alerts, IPOs, the chart
+analyzer and the admin panel. The analyzer tests use live Yahoo Finance data and skip themselves when it is
+unreachable. If Playwright's browser is not installed, run `npx playwright install chromium`, or point
 `PLAYWRIGHT_CHROMIUM_PATH` at an existing Chromium binary.
 
 ## License
