@@ -19,8 +19,6 @@
   },
   "include": [
     "e2e",
-    "playwright.config.ts",
-    "desktop/tests",
-    "desktop/playwright.config.ts"
+    "playwright.config.ts"
   ]
 }

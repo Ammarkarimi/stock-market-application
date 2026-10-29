@@ -1,5 +1,4 @@
-import { get, run, transaction } from '../db/index.js';
-import { config } from '../config.js';
+import { run, transaction } from '../db/index.js';
 import { nowIso, nowMs } from '../lib/clock.js';
 import { hashSecret, verifySecret } from '../lib/crypto.js';
 import { AppError, conflict, forbidden, locked, unauthorized } from '../lib/errors.js';
@@ -19,8 +18,6 @@ export interface NewUserInput {
   phone?: string | null;
   password: string;
   role?: 'USER' | 'ADMIN';
-  /** Make this user an admin if no other account exists yet (the owner of a desktop installation). */
-  ownerIfFirst?: boolean;
 }
 
 /** Inserts a user with an empty cash account and a default watchlist. Returns the new user id. */
@@ -30,8 +27,6 @@ export async function createUser(input: NewUserInput): Promise<number> {
   const passwordHash = await hashSecret(input.password);
   return transaction(() => {
     const now = nowIso();
-    // Decided inside the transaction, so two simultaneous sign-ups cannot both become the owner.
-    const isFirst = input.ownerIfFirst && get<{ n: number }>('SELECT COUNT(*) AS n FROM users')!.n === 0;
     const result = run(
       `INSERT INTO users (email, password_hash, full_name, phone, role, password_changed_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -39,7 +34,7 @@ export async function createUser(input: NewUserInput): Promise<number> {
       passwordHash,
       input.fullName.trim(),
       input.phone?.trim() || null,
-      isFirst ? 'ADMIN' : (input.role ?? 'USER'),
+      input.role ?? 'USER',
       now,
       now,
       now,
@@ -58,25 +53,22 @@ export interface AuthResult {
 }
 
 export async function register(input: NewUserInput, actor: Actor): Promise<AuthResult> {
-  const userId = await createUser({ ...input, role: 'USER', ownerIfFirst: config.firstUserIsAdmin });
+  const userId = await createUser({ ...input, role: 'USER' });
   return transaction(() => {
     const { token, session } = createSession(userId, actor);
     const user = findUserById(userId)!;
-    const owner = user.role === 'ADMIN';
     audit({
-      actor: { ...actor, userId, role: user.role },
+      actor: { ...actor, userId, role: 'USER' },
       action: 'USER_REGISTERED',
       entityType: 'USER',
       entityId: userId,
-      details: owner ? { email: user.email, role: 'ADMIN', reason: 'First account on this installation' } : { email: user.email },
+      details: { email: user.email },
     });
     notify(
       userId,
       'SYSTEM',
       'Welcome to StockKaro',
-      owner
-        ? 'Your account is ready, and as the first account you own this installation: the admin panel is in the menu. Add money and set a transaction PIN to start investing.'
-        : 'Your account is ready. Add money and set a transaction PIN to start investing.',
+      'Your account is ready. Add money and set a transaction PIN to start investing.',
       '/funds',
     );
     return { user, token, session };

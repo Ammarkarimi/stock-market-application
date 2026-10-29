@@ -27,6 +27,3 @@ blob-report/
 .vscode/
 .idea/
 
-# Desktop app
-desktop/build/
-desktop/release/

@@ -269,23 +269,24 @@ As an investor, I want the key indicators behind the verdict, so that I can chec
 - Shows RSI, MACD, ADX, Bollinger Bands, moving averages (20, 50, 200), volume trend and the position within the 52-week range, each with an interpretation.
 - The chart overlays the moving averages and the support and resistance levels.
 
-## Epic 16 — Desktop app
+## Epic 16 — Website
 
-**US-40 Download and install**
-As a visitor, I want to download StockKaro from a link and install it like any other app, so that I can use it without a server or a browser.
-- One download page offers installers for Windows, macOS (Apple silicon and Intel) and Linux.
-- The app opens in its own window with the StockKaro icon, and only one copy runs at a time.
-- Links to other websites open in my browser, not inside the app.
+**US-40 Public website**
+As a visitor, I want to open StockKaro at a web address and sign up, so that I can use it without installing anything.
+- StockKaro is served over HTTPS at a public address; anyone can register, sign in and use every investor feature.
+- New versions are live for everyone as soon as they are deployed; there is nothing to download or update.
+- Works in current desktop and mobile browsers.
 
-**US-41 A private copy on my computer**
-As an investor, I want my account, trades and data stored only on my computer, so that my information stays private.
-- The app runs its own server, reachable only from this computer, and keeps its database in my user folder.
-- The first account created becomes the owner, with access to the admin panel; later accounts are investors.
-- Live prices and charts come from the internet; without a connection the app still opens, on simulated prices.
+**US-41 Up-to-date prices while browsing**
+As an investor, I want prices, orders and notifications on screen to refresh by themselves, so that I see the market move.
+- Quotes refresh every few seconds while the page is visible, and pause while it is in the background.
+- Market data is refreshed from the exchange feed at most every 15 seconds, however many people are online.
+- Limit orders, price alerts, end-of-day expiry and IPO allotment are processed when prices refresh, and at least daily.
 
-**US-42 Releases**
-As the owner of StockKaro, I want installers built and published automatically for each version, so that the download link always offers the latest one.
-- Pushing a version tag builds the installers on Windows, macOS and Linux and publishes them as a release.
+**US-42 Durable accounts and data**
+As an investor, I want my account and history kept safely, so that nothing is lost between visits or deployments.
+- All data lives in a managed Postgres database, independent of the servers that answer requests.
+- Money movements stay consistent when many people use StockKaro at the same time.
 
 ---
 
@@ -335,6 +336,6 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-37 Pattern detection | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-38 Buy or not verdict | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-39 Indicators | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
-| US-40 Download and install | desktop app window | — | — | desktop smoke test |
-| US-41 A private copy on my computer | desktop app | `HOST`, `FIRST_USER_IS_ADMIN` server settings | auth | desktop smoke test |
-| US-42 Releases | GitHub Releases | `.github/workflows/desktop-release.yml` | — | — |
+| US-40 Public website | all | `vercel.json`, `api/index.ts` | — | all e2e specs |
+| US-41 Up-to-date prices while browsing | all | `GET /live`, `GET /cron/daily` | live, trading | trading |
+| US-42 Durable accounts and data | — | Postgres data layer (`server/src/db`) | all | all e2e specs |

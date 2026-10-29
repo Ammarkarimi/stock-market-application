@@ -10,21 +10,6 @@ audit trail.
 > app against those prices, and deposits and withdrawals move virtual money only. No order reaches an exchange.
 > IPOs are simulated. Not investment advice.
 
-## Download
-
-StockKaro is a desktop app for Windows, macOS and Linux: **[download the latest version](https://github.com/Ammarkarimi/stock-market-application/releases/latest)**.
-
-| Your computer | Installer |
-| ------------- | --------- |
-| Windows 10 or 11 | [StockKaro-Setup.exe](https://github.com/Ammarkarimi/stock-market-application/releases/latest/download/StockKaro-Setup.exe) |
-| Mac with Apple silicon | [StockKaro-mac-arm64.dmg](https://github.com/Ammarkarimi/stock-market-application/releases/latest/download/StockKaro-mac-arm64.dmg) |
-| Mac with Intel | [StockKaro-mac-x64.dmg](https://github.com/Ammarkarimi/stock-market-application/releases/latest/download/StockKaro-mac-x64.dmg) |
-| Linux | [StockKaro-linux-x86_64.AppImage](https://github.com/Ammarkarimi/stock-market-application/releases/latest/download/StockKaro-linux-x86_64.AppImage) or [.deb](https://github.com/Ammarkarimi/stock-market-application/releases/latest/download/StockKaro-linux-amd64.deb) |
-
-These links always point to the newest release. The installers are not code-signed yet, so Windows and macOS ask
-you to confirm the first launch; the [release notes](desktop/RELEASE_NOTES.md) explain how. Each copy is private:
-it runs its own StockKaro server on that computer, and the first account created owns it, with the admin panel.
-
 ## Market data
 
 | Data | Source |
@@ -120,9 +105,6 @@ Run from the repository root.
 | `npm run typecheck` | Type-check the server, the client and the end-to-end tests |
 | `npm run db:reset` | Delete the local database; it is recreated (and re-seeded) on the next start |
 | `npm run promote-admin -- <email>` | Give an existing user the admin role |
-| `npm run desktop:start` | Build, then open StockKaro as a desktop app (needs `npm ci --prefix desktop` once) |
-| `npm run desktop:dist` | Build the desktop installers for this operating system into `desktop/release` |
-| `npm run test:desktop` | Build, then check the desktop app end to end (on Linux without a screen, prefix `xvfb-run -a`) |
 
 ## Configuration
 
@@ -266,25 +248,6 @@ ledger and order engine would become a view of the broker's records.
 - The audit trail is append-only (database triggers reject updates and deletes) and each entry stores a hash of
   the previous one, so tampering is detectable with Admin → Audit trail → Verify integrity.
 
-## Desktop app
-
-`desktop/` wraps StockKaro in [Electron](https://www.electronjs.org/). The app starts the StockKaro server as a
-background process listening only on `127.0.0.1`, on a free port, with its database in the user's app data folder
-(`%APPDATA%\StockKaro` on Windows, `~/Library/Application Support/StockKaro` on macOS, `~/.config/StockKaro` on
-Linux; *File → Open Data Folder*). It sets `FIRST_USER_IS_ADMIN`, so the first account owns that copy. Prices come
-from Yahoo Finance directly on each user's computer, with the simulated market as the offline fallback.
-
-**Publishing a release.** Raise `version` in `package.json` (for example to `1.1.0`), commit, then push a matching
-tag: `git tag v1.1.0 && git push origin v1.1.0`. The [Desktop release](.github/workflows/desktop-release.yml)
-workflow tests the app, builds the installers on Windows, macOS and Linux, and publishes them as a GitHub release
-with [the release notes](desktop/RELEASE_NOTES.md); the download links above then serve the new version. Running
-the workflow by hand (*Actions → Desktop release → Run workflow*) builds the installers without publishing them.
-
-**Signing.** Without certificates, Windows SmartScreen and macOS Gatekeeper warn on first launch. To remove the
-warnings, buy a Windows code-signing certificate and join the Apple Developer Program, then add the certificates as
-repository secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`, and for macOS notarization `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) and remove `identity: null` from `desktop/electron-builder.yml`.
-
 ## Testing
 
 ```bash
@@ -296,9 +259,7 @@ npm run typecheck
 The end-to-end tests start the built server on port 4300 (override with `E2E_PORT`) with an in-memory database
 and demo data, and drive Chromium through registration, trading, funds, watchlists and alerts, IPOs, the chart
 analyzer and the admin panel. The analyzer tests use live Yahoo Finance data and skip themselves when it is
-unreachable. `npm run test:desktop` launches the packaged desktop app itself: it checks that the private server
-starts, that the first account owns the copy, that a second copy hands over to the first, and that data survives a
-restart. If Playwright's browser is not installed, run `npx playwright install chromium`, or point
+unreachable. If Playwright's browser is not installed, run `npx playwright install chromium`, or point
 `PLAYWRIGHT_CHROMIUM_PATH` at an existing Chromium binary.
 
 ## License

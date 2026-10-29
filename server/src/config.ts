@@ -41,8 +41,6 @@ export const config = {
   isProduction: env === 'production',
   isTest,
   port: num('PORT', 4000),
-  /** Interface to listen on; the desktop app uses 127.0.0.1 so other computers cannot connect. Default: all. */
-  host: process.env.HOST || undefined,
   /**
    * SQLite file, relative to server/. ':memory:' keeps everything in memory (nothing survives a restart). The default
    * file keeps the product's earlier name so existing databases are still found.
@@ -68,8 +66,6 @@ export const config = {
   /** Demo accounts have published passwords, so production only seeds them when explicitly asked to. */
   seedDemoData: bool('SEED_DEMO_DATA', !isTest && env !== 'production'),
   rateLimitEnabled: bool('RATE_LIMIT', !isTest),
-  /** The first account registered becomes an admin: the owner of a single-user (desktop) installation. */
-  firstUserIsAdmin: bool('FIRST_USER_IS_ADMIN', false),
   clientDistPath: path.resolve(serverRoot, '../client/dist'),
   timezone: 'Asia/Kolkata',
   serverRoot,
