@@ -279,7 +279,7 @@ As a visitor, I want to open StockKaro at a web address and sign up, so that I c
 
 **US-41 Up-to-date prices while browsing**
 As an investor, I want prices, orders and notifications on screen to refresh by themselves, so that I see the market move.
-- Quotes refresh every few seconds while the page is visible, and only about once a minute while it is in the background.
+- Quotes refresh every few seconds while the page is visible, and pause while it is in the background.
 - Market data is refreshed from the exchange feed at most every 15 seconds, however many people are online.
 - Limit orders, price alerts, end-of-day expiry and IPO allotment are processed when prices refresh, and at least daily.
 

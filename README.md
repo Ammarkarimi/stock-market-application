@@ -157,10 +157,11 @@ audit trail see the client's IP.
 ### Vercel
 
 [`vercel.json`](vercel.json) deploys the built client as static files and the API as one Node.js function
-([`api/index.mjs`](api/index.mjs)) in Singapore (`sin1`), with a daily cron at 16:47 IST.
+([`api/index.mjs`](api/index.mjs)) in Washington, D.C. (`iad1`), next to the database, with a daily cron at 16:47 IST.
 
 1. Import the repository into Vercel (no framework preset; the settings come from `vercel.json`).
-2. Under **Storage**, create a **Neon** Postgres database in the Singapore region and connect it to the project.
+2. Under **Storage**, create a **Neon** Postgres database and connect it to the project. Keep the function
+   region in `vercel.json` the same as the database's region: every request makes several queries.
    This sets `DATABASE_URL`.
 3. Add the environment variables `CRON_SECRET` (a long random string) and `TRUST_PROXY=1`.
 4. Deploy. The first request migrates and seeds the database, then real prices and history load in the
@@ -222,7 +223,7 @@ docs/              User stories
   (between one and three ATRs below the price), and the target is the next resistance. While the exchange is
   trading (from Yahoo's session times), the last candle is today's unfinished session: trend and momentum use its
   latest price, while candlestick patterns and volume are read from completed sessions only.
-- **Real-time updates**: signed-in browsers poll `GET /api/live` every five seconds (once a minute in a hidden tab)
+- **Real-time updates**: signed-in browsers poll `GET /api/live` every five seconds while the tab is visible
   for every quote plus the user's new notifications and changes (orders, funds, holdings, IPOs, alerts) since their
   last poll, and refresh the matching screens. A revoked session gets a 401 on its next poll and signs out.
 - **Writes** run in transactions that each take one Postgres advisory lock, so they apply one at a time, as

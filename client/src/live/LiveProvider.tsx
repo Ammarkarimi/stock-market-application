@@ -9,8 +9,6 @@ import { isRecentLocalAction } from './localActions';
 import { applyTicks, setStreamConnected, type TickTuple } from './priceStore';
 
 const POLL_MS = 5_000;
-/** Slower polling while the tab is hidden, just enough to keep notifications and the session fresh. */
-const HIDDEN_POLL_MS = 60_000;
 
 interface LiveUpdate {
   tradingDate: string;
@@ -32,13 +30,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
+    let inFlight = false;
     let cursor: { notificationsAfter: number; eventsAfter: number; tradingDate: string } | null = null;
 
     const invalidate = (...queryKeys: readonly unknown[][]) => {
       for (const queryKey of queryKeys) void queryClient.invalidateQueries({ queryKey });
     };
     const handlers: Record<string, () => void> = {
-      order: () => invalidate(['orders'], ['trades'], ['portfolio'], ['funds'], ['statement'], ['securities', 'detail']),
+      order: () =>
+        invalidate(['orders'], ['trades'], ['portfolio'], ['funds'], ['statement'], ['securities', 'detail']),
       portfolio: () => invalidate(['portfolio'], ['securities', 'detail']),
       funds: () => invalidate(['funds'], ['statement']),
       ipo: () => invalidate(['ipos']),
@@ -48,10 +48,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
     const show = (notification: Notification) => {
       if (isRecentLocalAction(notification.category)) return;
-      const toastFn = notification.category === 'PRICE_ALERT' || notification.category === 'SECURITY' ? toast.warning : toast.info;
+      const toastFn =
+        notification.category === 'PRICE_ALERT' || notification.category === 'SECURITY'
+          ? toast.warning
+          : toast.info;
       toastFn(notification.title, {
         description: notification.message,
-        action: notification.link ? { label: 'View', onClick: () => navigate(notification.link!) } : undefined,
+        action: notification.link
+          ? { label: 'View', onClick: () => navigate(notification.link!) }
+          : undefined,
       });
     };
 
@@ -74,9 +79,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
     const poll = async () => {
       timer = undefined;
+      inFlight = true;
       controller = new AbortController();
       try {
-        const query = cursor ? qs({ notificationsAfter: cursor.notificationsAfter, eventsAfter: cursor.eventsAfter }) : '';
+        const query = cursor
+          ? qs({ notificationsAfter: cursor.notificationsAfter, eventsAfter: cursor.eventsAfter })
+          : '';
         apply(await api.get<LiveUpdate>(`/live${query}`, controller.signal));
         setStreamConnected(true);
       } catch (err) {
@@ -84,19 +92,22 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         setStreamConnected(false);
         // A 401 has already signed the user out (see onUnauthorized in the auth provider).
         if (err instanceof ApiError && err.status === 401) return;
+      } finally {
+        inFlight = false;
       }
       schedule();
     };
 
-    const schedule = (delay = document.hidden ? HIDDEN_POLL_MS : POLL_MS) => {
-      if (stopped) return;
+    // A hidden tab stops polling, so an idle tab lets the server and database sleep.
+    const schedule = (delay = POLL_MS) => {
+      if (stopped || document.hidden) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => void poll(), delay);
     };
 
-    // Coming back to the tab refreshes straight away instead of waiting for the slow hidden-tab poll.
+    // Coming back to the tab catches up straight away.
     const onVisibility = () => {
-      if (!document.hidden && timer) schedule(0);
+      if (!document.hidden && !inFlight && !timer) schedule(0);
     };
     document.addEventListener('visibilitychange', onVisibility);
     void poll();
