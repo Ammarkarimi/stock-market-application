@@ -269,6 +269,24 @@ As an investor, I want the key indicators behind the verdict, so that I can chec
 - Shows RSI, MACD, ADX, Bollinger Bands, moving averages (20, 50, 200), volume trend and the position within the 52-week range, each with an interpretation.
 - The chart overlays the moving averages and the support and resistance levels.
 
+## Epic 16 — Desktop app
+
+**US-40 Download and install**
+As a visitor, I want to download StockKaro from a link and install it like any other app, so that I can use it without a server or a browser.
+- One download page offers installers for Windows, macOS (Apple silicon and Intel) and Linux.
+- The app opens in its own window with the StockKaro icon, and only one copy runs at a time.
+- Links to other websites open in my browser, not inside the app.
+
+**US-41 A private copy on my computer**
+As an investor, I want my account, trades and data stored only on my computer, so that my information stays private.
+- The app runs its own server, reachable only from this computer, and keeps its database in my user folder.
+- The first account created becomes the owner, with access to the admin panel; later accounts are investors.
+- Live prices and charts come from the internet; without a connection the app still opens, on simulated prices.
+
+**US-42 Releases**
+As the owner of StockKaro, I want installers built and published automatically for each version, so that the download link always offers the latest one.
+- Pushing a version tag builds the installers on Windows, macOS and Linux and publishes them as a release.
+
 ---
 
 ## Traceability
@@ -317,3 +335,6 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-37 Pattern detection | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-38 Buy or not verdict | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-39 Indicators | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
+| US-40 Download and install | desktop app window | — | — | desktop smoke test |
+| US-41 A private copy on my computer | desktop app | `HOST`, `FIRST_USER_IS_ADMIN` server settings | auth | desktop smoke test |
+| US-42 Releases | GitHub Releases | `.github/workflows/desktop-release.yml` | — | — |
