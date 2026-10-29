@@ -26,3 +26,7 @@ blob-report/
 .DS_Store
 .vscode/
 .idea/
+
+# Desktop app
+desktop/build/
+desktop/release/

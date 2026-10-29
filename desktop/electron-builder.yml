@@ -1,0 +1,47 @@
+# Installers for StockKaro. Build with `npm run desktop:dist` from the repository root.
+appId: com.ammarkarimi.stockkaro
+productName: StockKaro
+copyright: Copyright © 2026 Ammar Karimi
+directories:
+  app: build/app
+  buildResources: resources
+  output: release
+# The server runs as a separate process from plain files, so the app is not packed into an asar archive.
+asar: false
+# better-sqlite3 ships prebuilt Node-API binaries that work in Electron as they are.
+npmRebuild: false
+artifactName: StockKaro-${version}-${os}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  artifactName: StockKaro-Setup-${version}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: StockKaro
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.finance
+  # Not signed with an Apple Developer ID yet: macOS asks users to confirm the first launch.
+  identity: null
+dmg:
+  artifactName: StockKaro-${version}-mac-${arch}.${ext}
+
+linux:
+  target: [AppImage, deb]
+  category: Office
+  synopsis: Paper trading and chart analysis for the Indian stock market
+  maintainer: Ammar Karimi <ammarkarimi.ai@gmail.com>
+
+# Where releases live. Builds never upload by themselves (`--publish never`); the release workflow attaches them.
+publish:
+  provider: github
+  owner: Ammarkarimi
+  repo: stock-market-application
