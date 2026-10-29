@@ -8,9 +8,9 @@ let admin: TestClient;
 let adminId: number;
 
 beforeAll(async () => {
-  setupMarket({ ipos: true });
+  await setupMarket({ ipos: true });
   const { user, email } = await registerClient({ fullName: 'Admin User' });
-  run("UPDATE users SET role = 'ADMIN' WHERE id = ?", user.id);
+  await run("UPDATE users SET role = 'ADMIN' WHERE id = ?", user.id);
   adminId = user.id;
   admin = new TestClient();
   const res = await admin.post('/api/auth/login', { email, password: DEFAULT_PASSWORD });

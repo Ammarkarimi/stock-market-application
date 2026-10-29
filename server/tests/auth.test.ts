@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { db } from '../src/db/index.js';
+import { get, run } from '../src/db/index.js';
 import { verifyAuditChain } from '../src/services/audit.service.js';
 import { DEFAULT_PASSWORD, registerClient, TestClient } from './helpers.js';
 
@@ -68,10 +68,8 @@ describe('registration and login', () => {
     expect(res.headers['set-cookie']?.[0]).toMatch(/HttpOnly/);
     expect(res.headers['set-cookie']?.[0]).toMatch(/SameSite=Lax/);
     const userId = res.body.user.id;
-    const row = db()
-      .prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND category = 'SECURITY'")
-      .get(userId) as { n: number };
-    expect(row.n).toBe(1);
+    const row = await get<{ n: number }>("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND category = 'SECURITY'", userId);
+    expect(row!.n).toBe(1);
   });
 });
 
@@ -166,8 +164,9 @@ describe('audit trail', () => {
     expect(activity.status).toBe(200);
     expect(activity.body.items.map((i: { action: string }) => i.action)).toContain('USER_REGISTERED');
 
-    expect(verifyAuditChain().valid).toBe(true);
-    expect(() => db().prepare("UPDATE audit_logs SET action = 'X' WHERE id = 1").run()).toThrow(/append-only/);
-    expect(() => db().prepare('DELETE FROM audit_logs').run()).toThrow(/append-only/);
+    expect((await verifyAuditChain()).valid).toBe(true);
+    await expect(run("UPDATE audit_logs SET action = 'X' WHERE id = 1")).rejects.toThrow(/append-only/);
+    await expect(run('DELETE FROM audit_logs')).rejects.toThrow(/append-only/);
+    await expect(run('TRUNCATE audit_logs')).rejects.toThrow(/append-only/);
   });
 });

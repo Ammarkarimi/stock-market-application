@@ -55,22 +55,22 @@ export function parsePreferences(raw: string | null | undefined): NotificationPr
  * Creates an in-app notification (unless the user muted the category) and pushes it over the live
  * stream once the surrounding transaction commits.
  */
-export function notify(
+export async function notify(
   userId: number,
   category: NotificationCategory,
   title: string,
   message: string,
   link: string | null = null,
-): NotificationDto | null {
+): Promise<NotificationDto | null> {
   if (category !== 'SECURITY') {
     const prefs = parsePreferences(
-      get<{ notification_prefs: string }>('SELECT notification_prefs FROM users WHERE id = ?', userId)
+      (await get<{ notification_prefs: string }>('SELECT notification_prefs FROM users WHERE id = ?', userId))
         ?.notification_prefs,
     );
     if (!prefs[category]) return null;
   }
   const createdAt = nowIso();
-  const result = run(
+  const result = await run(
     `INSERT INTO notifications (user_id, category, title, message, link, is_read, created_at)
      VALUES (?, ?, ?, ?, ?, 0, ?)`,
     userId,
@@ -93,52 +93,52 @@ export function notify(
   return dto;
 }
 
-export function listNotifications(
+export async function listNotifications(
   userId: number,
   query: { category?: NotificationCategory; unreadOnly?: boolean; page: number; pageSize: number },
-): Page<NotificationDto> & { unreadCount: number } {
+): Promise<Page<NotificationDto> & { unreadCount: number }> {
   const where = ['user_id = ?'];
   const params: unknown[] = [userId];
   if (query.category) (where.push('category = ?'), params.push(query.category));
   if (query.unreadOnly) where.push('is_read = 0');
   const clause = where.join(' AND ');
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM notifications WHERE ${clause}`, ...params)?.n ?? 0;
-  const rows = all<NotificationRow>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM notifications WHERE ${clause}`, ...params))?.n ?? 0;
+  const rows = await all<NotificationRow>(
     `SELECT * FROM notifications WHERE ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`,
     ...params,
     query.pageSize,
     (query.page - 1) * query.pageSize,
   );
-  return { ...pageOf(rows.map(toDto), total, query.page, query.pageSize), unreadCount: unreadCount(userId) };
+  return { ...pageOf(rows.map(toDto), total, query.page, query.pageSize), unreadCount: (await unreadCount(userId)) };
 }
 
-export function unreadCount(userId: number): number {
-  return get<{ n: number }>('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0', userId)?.n ?? 0;
+export async function unreadCount(userId: number): Promise<number> {
+  return (await get<{ n: number }>('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0', userId))?.n ?? 0;
 }
 
-export function markRead(userId: number, id: number): void {
-  const result = run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', id, userId);
+export async function markRead(userId: number, id: number): Promise<void> {
+  const result = await run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', id, userId);
   if (result.changes === 0) throw notFound('Notification not found');
 }
 
-export function markAllRead(userId: number): number {
-  return run('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0', userId).changes;
+export async function markAllRead(userId: number): Promise<number> {
+  return (await run('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0', userId)).changes;
 }
 
-export function deleteNotification(userId: number, id: number): void {
-  const result = run('DELETE FROM notifications WHERE id = ? AND user_id = ?', id, userId);
+export async function deleteNotification(userId: number, id: number): Promise<void> {
+  const result = await run('DELETE FROM notifications WHERE id = ? AND user_id = ?', id, userId);
   if (result.changes === 0) throw notFound('Notification not found');
 }
 
 /** Sends a notification to every active user (admin announcements, new IPOs). */
-export function notifyAllUsers(
+export async function notifyAllUsers(
   category: NotificationCategory,
   title: string,
   message: string,
   link: string | null = null,
-): number {
-  const users = all<{ id: number }>("SELECT id FROM users WHERE status = 'ACTIVE'");
+): Promise<number> {
+  const users = await all<{ id: number }>("SELECT id FROM users WHERE status = 'ACTIVE'");
   let delivered = 0;
-  for (const user of users) if (notify(user.id, category, title, message, link)) delivered++;
+  for (const user of users) if ((await notify(user.id, category, title, message, link))) delivered++;
   return delivered;
 }

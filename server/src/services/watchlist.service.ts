@@ -23,14 +23,14 @@ export interface WatchlistDto {
   items: (QuoteDto & { addedAt: string })[];
 }
 
-function requireWatchlist(userId: number, id: number): WatchlistRow {
-  const row = get<WatchlistRow>('SELECT * FROM watchlists WHERE id = ? AND user_id = ?', id, userId);
+async function requireWatchlist(userId: number, id: number): Promise<WatchlistRow> {
+  const row = await get<WatchlistRow>('SELECT * FROM watchlists WHERE id = ? AND user_id = ?', id, userId);
   if (!row) throw notFound('Watchlist not found');
   return row;
 }
 
-function toDto(row: WatchlistRow): WatchlistDto {
-  const items = all<{ security_id: number; added_at: string }>(
+async function toDto(row: WatchlistRow): Promise<WatchlistDto> {
+  const items = await all<{ security_id: number; added_at: string }>(
     'SELECT security_id, added_at FROM watchlist_items WHERE watchlist_id = ? ORDER BY added_at',
     row.id,
   );
@@ -47,82 +47,84 @@ function toDto(row: WatchlistRow): WatchlistDto {
 
 const changed = (userId: number) => afterCommit(() => emitToUser(userId, 'watchlist'));
 
-export function listWatchlists(userId: number): WatchlistDto[] {
-  return all<WatchlistRow>('SELECT * FROM watchlists WHERE user_id = ? ORDER BY id', userId).map(toDto);
+export async function listWatchlists(userId: number): Promise<WatchlistDto[]> {
+  const dtos: WatchlistDto[] = [];
+  for (const row of await all<WatchlistRow>('SELECT * FROM watchlists WHERE user_id = ? ORDER BY id', userId)) dtos.push(await toDto(row));
+  return dtos;
 }
 
-export function createWatchlist(userId: number, name: string, actor: Actor): WatchlistDto {
-  return transaction(() => {
-    const count = get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlists WHERE user_id = ?', userId)!.n;
+export async function createWatchlist(userId: number, name: string, actor: Actor): Promise<WatchlistDto> {
+  return await transaction(async () => {
+    const count = (await get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlists WHERE user_id = ?', userId))!.n;
     if (count >= MAX_WATCHLISTS) throw unprocessable('LIMIT_REACHED', `You can have at most ${MAX_WATCHLISTS} watchlists`);
-    if (get('SELECT 1 FROM watchlists WHERE user_id = ? AND name = ?', userId, name)) {
+    if ((await get('SELECT 1 FROM watchlists WHERE user_id = ? AND name = ?', userId, name))) {
       throw conflict(`A watchlist named "${name}" already exists`);
     }
-    const id = Number(run('INSERT INTO watchlists (user_id, name, created_at) VALUES (?, ?, ?)', userId, name, nowIso()).lastInsertRowid);
-    audit({ actor, action: 'WATCHLIST_CREATED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { name } });
+    const id = Number((await run('INSERT INTO watchlists (user_id, name, created_at) VALUES (?, ?, ?)', userId, name, nowIso())).lastInsertRowid);
+    await audit({ actor, action: 'WATCHLIST_CREATED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { name } });
     changed(userId);
-    return toDto(requireWatchlist(userId, id));
+    return toDto((await requireWatchlist(userId, id)));
   });
 }
 
-export function renameWatchlist(userId: number, id: number, name: string, actor: Actor): WatchlistDto {
-  return transaction(() => {
-    const row = requireWatchlist(userId, id);
-    if (get('SELECT 1 FROM watchlists WHERE user_id = ? AND name = ? AND id != ?', userId, name, id)) {
+export async function renameWatchlist(userId: number, id: number, name: string, actor: Actor): Promise<WatchlistDto> {
+  return await transaction(async () => {
+    const row = await requireWatchlist(userId, id);
+    if ((await get('SELECT 1 FROM watchlists WHERE user_id = ? AND name = ? AND id != ?', userId, name, id))) {
       throw conflict(`A watchlist named "${name}" already exists`);
     }
-    run('UPDATE watchlists SET name = ? WHERE id = ?', name, id);
-    audit({ actor, action: 'WATCHLIST_RENAMED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { from: row.name, to: name } });
+    await run('UPDATE watchlists SET name = ? WHERE id = ?', name, id);
+    await audit({ actor, action: 'WATCHLIST_RENAMED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { from: row.name, to: name } });
     changed(userId);
-    return toDto(requireWatchlist(userId, id));
+    return toDto((await requireWatchlist(userId, id)));
   });
 }
 
-export function deleteWatchlist(userId: number, id: number, actor: Actor): void {
-  transaction(() => {
-    const row = requireWatchlist(userId, id);
-    const count = get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlists WHERE user_id = ?', userId)!.n;
+export async function deleteWatchlist(userId: number, id: number, actor: Actor): Promise<void> {
+  await transaction(async () => {
+    const row = await requireWatchlist(userId, id);
+    const count = (await get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlists WHERE user_id = ?', userId))!.n;
     if (count <= 1) throw conflict('You need at least one watchlist');
-    run('DELETE FROM watchlists WHERE id = ?', id);
-    audit({ actor, action: 'WATCHLIST_DELETED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { name: row.name } });
+    await run('DELETE FROM watchlists WHERE id = ?', id);
+    await audit({ actor, action: 'WATCHLIST_DELETED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { name: row.name } });
     changed(userId);
   });
 }
 
-export function addToWatchlist(userId: number, id: number, symbol: string, actor: Actor): WatchlistDto {
-  return transaction(() => {
-    requireWatchlist(userId, id);
+export async function addToWatchlist(userId: number, id: number, symbol: string, actor: Actor): Promise<WatchlistDto> {
+  return await transaction(async () => {
+    await requireWatchlist(userId, id);
     const quote = getQuoteBySymbol(symbol);
     if (!quote) throw notFound(`Security ${symbol.toUpperCase()} not found`);
-    if (get('SELECT 1 FROM watchlist_items WHERE watchlist_id = ? AND security_id = ?', id, quote.securityId)) {
+    if ((await get('SELECT 1 FROM watchlist_items WHERE watchlist_id = ? AND security_id = ?', id, quote.securityId))) {
       throw conflict(`${quote.symbol} is already in this watchlist`);
     }
-    const count = get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlist_items WHERE watchlist_id = ?', id)!.n;
+    const count = (await get<{ n: number }>('SELECT COUNT(*) AS n FROM watchlist_items WHERE watchlist_id = ?', id))!.n;
     if (count >= MAX_WATCHLIST_ITEMS) throw unprocessable('LIMIT_REACHED', `A watchlist can hold at most ${MAX_WATCHLIST_ITEMS} securities`);
-    run('INSERT INTO watchlist_items (watchlist_id, security_id, added_at) VALUES (?, ?, ?)', id, quote.securityId, nowIso());
-    audit({ actor, action: 'WATCHLIST_ITEM_ADDED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { symbol: quote.symbol } });
+    await run('INSERT INTO watchlist_items (watchlist_id, security_id, added_at) VALUES (?, ?, ?)', id, quote.securityId, nowIso());
+    await audit({ actor, action: 'WATCHLIST_ITEM_ADDED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { symbol: quote.symbol } });
     changed(userId);
-    return toDto(requireWatchlist(userId, id));
+    return toDto((await requireWatchlist(userId, id)));
   });
 }
 
-export function removeFromWatchlist(userId: number, id: number, symbol: string, actor: Actor): WatchlistDto {
-  return transaction(() => {
-    requireWatchlist(userId, id);
+export async function removeFromWatchlist(userId: number, id: number, symbol: string, actor: Actor): Promise<WatchlistDto> {
+  return await transaction(async () => {
+    await requireWatchlist(userId, id);
     const quote = getQuoteBySymbol(symbol);
     const removed = quote
-      ? run('DELETE FROM watchlist_items WHERE watchlist_id = ? AND security_id = ?', id, quote.securityId).changes
+      ? (await run('DELETE FROM watchlist_items WHERE watchlist_id = ? AND security_id = ?', id, quote.securityId)).changes
       : 0;
     if (!removed) throw notFound(`${symbol.toUpperCase()} is not in this watchlist`);
-    audit({ actor, action: 'WATCHLIST_ITEM_REMOVED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { symbol: quote!.symbol } });
+    await audit({ actor, action: 'WATCHLIST_ITEM_REMOVED', subjectUserId: userId, entityType: 'WATCHLIST', entityId: id, details: { symbol: quote!.symbol } });
     changed(userId);
-    return toDto(requireWatchlist(userId, id));
+    return toDto((await requireWatchlist(userId, id)));
   });
 }
 
 /** Watchlists of a user that contain the given security (for the security page). */
-export function watchlistsContaining(userId: number, securityId: number): { id: number; name: string }[] {
-  return all<{ id: number; name: string }>(
+export async function watchlistsContaining(userId: number, securityId: number): Promise<{ id: number; name: string }[]> {
+  return await all<{ id: number; name: string }>(
     `SELECT w.id, w.name FROM watchlists w JOIN watchlist_items i ON i.watchlist_id = w.id
       WHERE w.user_id = ? AND i.security_id = ? ORDER BY w.id`,
     userId,

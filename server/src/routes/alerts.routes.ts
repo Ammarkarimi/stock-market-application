@@ -9,24 +9,24 @@ import { createAlert, deleteAlert, listAlerts, updateAlert } from '../services/a
 const router = Router();
 const note = z.string().trim().max(140).nullable().optional();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const query = parse(
     z.object({ status: z.enum(['ACTIVE', 'TRIGGERED', 'DISABLED']).optional(), symbol: symbolParam().optional() }),
     req.query,
   );
-  res.json({ alerts: listAlerts(currentUser(req).id, query) });
+  res.json({ alerts: (await listAlerts(currentUser(req).id, query)) });
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const body = parse(
     z.object({ symbol: symbolParam(), condition: z.enum(['ABOVE', 'BELOW']), targetPrice: rupees(), note }),
     req.body,
   );
-  const alert = createAlert(currentUser(req).id, { ...body, targetPrice: toPaise(body.targetPrice) }, actorFrom(req));
+  const alert = await createAlert(currentUser(req).id, { ...body, targetPrice: toPaise(body.targetPrice) }, actorFrom(req));
   res.status(201).json({ alert });
 });
 
-router.patch('/:id', (req, res) => {
+router.patch('/:id', async (req, res) => {
   const body = parse(
     z.object({
       status: z.enum(['ACTIVE', 'DISABLED']).optional(),
@@ -36,7 +36,7 @@ router.patch('/:id', (req, res) => {
     }),
     req.body,
   );
-  const alert = updateAlert(
+  const alert = await updateAlert(
     currentUser(req).id,
     parse(idParam(), req.params.id),
     { ...body, targetPrice: body.targetPrice ? toPaise(body.targetPrice) : undefined },
@@ -45,8 +45,8 @@ router.patch('/:id', (req, res) => {
   res.json({ alert });
 });
 
-router.delete('/:id', (req, res) => {
-  deleteAlert(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req));
+router.delete('/:id', async (req, res) => {
+  await deleteAlert(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req));
   res.json({ ok: true });
 });
 

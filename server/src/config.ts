@@ -41,11 +41,13 @@ export const config = {
   isProduction: env === 'production',
   isTest,
   port: num('PORT', 4000),
-  /**
-   * SQLite file, relative to server/. ':memory:' keeps everything in memory (nothing survives a restart). The default
-   * file keeps the product's earlier name so existing databases are still found.
-   */
-  databasePath: isTest ? ':memory:' : resolveDatabasePath(process.env.DATABASE_PATH || 'data/stocksphere.db'),
+  /** Postgres connection string (Neon on Vercel). Without one, StockKaro runs on an embedded PGlite database. */
+  // Tests use an in-memory PGlite database unless TEST_DATABASE_URL points them at a real Postgres server.
+  databaseUrl: (isTest ? process.env.TEST_DATABASE_URL : process.env.DATABASE_URL || process.env.POSTGRES_URL) || null,
+  /** Connections per server instance when using Postgres. */
+  databasePoolSize: num('DATABASE_POOL_SIZE', 5),
+  /** PGlite data folder when there is no DATABASE_URL, relative to server/; ':memory:' keeps nothing after exit. */
+  databasePath: isTest ? ':memory:' : resolveDatabasePath(process.env.DATABASE_PATH || 'data/pglite'),
   /** Session expires after this many minutes without any authenticated request. */
   sessionIdleMinutes: num('SESSION_IDLE_MINUTES', 120),
   /** Absolute session lifetime regardless of activity. */

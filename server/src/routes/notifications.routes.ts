@@ -13,7 +13,7 @@ import {
 
 const router = Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const query = parse(
     z.object({
       category: z.enum(NOTIFICATION_CATEGORIES).optional(),
@@ -22,24 +22,24 @@ router.get('/', (req, res) => {
     }),
     req.query,
   );
-  res.json(listNotifications(currentUser(req).id, { ...query, unreadOnly: query.unread === 'true' }));
+  res.json((await listNotifications(currentUser(req).id, { ...query, unreadOnly: query.unread === 'true' })));
 });
 
-router.get('/unread-count', (req, res) => {
-  res.json({ count: unreadCount(currentUser(req).id) });
+router.get('/unread-count', async (req, res) => {
+  res.json({ count: (await unreadCount(currentUser(req).id)) });
 });
 
-router.post('/read-all', (req, res) => {
-  res.json({ updated: markAllRead(currentUser(req).id) });
+router.post('/read-all', async (req, res) => {
+  res.json({ updated: (await markAllRead(currentUser(req).id)) });
 });
 
-router.post('/:id/read', (req, res) => {
-  markRead(currentUser(req).id, parse(idParam(), req.params.id));
+router.post('/:id/read', async (req, res) => {
+  await markRead(currentUser(req).id, parse(idParam(), req.params.id));
   res.json({ ok: true });
 });
 
-router.delete('/:id', (req, res) => {
-  deleteNotification(currentUser(req).id, parse(idParam(), req.params.id));
+router.delete('/:id', async (req, res) => {
+  await deleteNotification(currentUser(req).id, parse(idParam(), req.params.id));
   res.json({ ok: true });
 });
 

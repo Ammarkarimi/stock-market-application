@@ -12,11 +12,11 @@ let registered = false;
 export function registerMarketListeners(): void {
   if (registered) return;
   registered = true;
-  onMarketTick((changed) => {
-    if (isMarketOpen()) matchOpenOrders(changed);
-    checkAlerts(changed);
+  onMarketTick(async (changed) => {
+    if (isMarketOpen()) await matchOpenOrders(changed);
+    await checkAlerts(changed);
   });
-  onMarketRollover((_previous, next) => {
-    if (!isLiveSource()) expireDayOrders(next);
+  onMarketRollover(async (_previous, next) => {
+    if (!isLiveSource()) await expireDayOrders(next);
   });
 }

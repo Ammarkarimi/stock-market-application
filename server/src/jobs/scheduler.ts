@@ -8,24 +8,24 @@ let timer: NodeJS.Timeout | null = null;
 let runs = 0;
 
 /** Runs periodic housekeeping: IPO lifecycle (opening, subscriptions, allotment, listing) and session cleanup. */
-export function runScheduledJobs(): void {
+export async function runScheduledJobs(): Promise<void> {
   try {
-    processIpoLifecycle();
+    await processIpoLifecycle();
   } catch (err) {
     console.error('IPO lifecycle job failed', err);
   }
   if (runs++ % SESSION_CLEANUP_EVERY === 0) {
     try {
-      cleanupSessions();
+      await cleanupSessions();
     } catch (err) {
       console.error('Session cleanup failed', err);
     }
   }
 }
 
-export function startScheduler(): void {
+export async function startScheduler(): Promise<void> {
   if (timer) return;
-  runScheduledJobs();
+  await runScheduledJobs();
   timer = setInterval(runScheduledJobs, INTERVAL_MS);
 }
 

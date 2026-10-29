@@ -15,32 +15,32 @@ import {
 const router = Router();
 const nameSchema = z.object({ name: z.string().trim().min(1, 'Name is required').max(40, 'Name is too long') });
 
-router.get('/', (req, res) => {
-  res.json({ watchlists: listWatchlists(currentUser(req).id) });
+router.get('/', async (req, res) => {
+  res.json({ watchlists: (await listWatchlists(currentUser(req).id)) });
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name } = parse(nameSchema, req.body);
-  res.status(201).json({ watchlist: createWatchlist(currentUser(req).id, name, actorFrom(req)) });
+  res.status(201).json({ watchlist: (await createWatchlist(currentUser(req).id, name, actorFrom(req))) });
 });
 
-router.patch('/:id', (req, res) => {
+router.patch('/:id', async (req, res) => {
   const { name } = parse(nameSchema, req.body);
-  res.json({ watchlist: renameWatchlist(currentUser(req).id, parse(idParam(), req.params.id), name, actorFrom(req)) });
+  res.json({ watchlist: (await renameWatchlist(currentUser(req).id, parse(idParam(), req.params.id), name, actorFrom(req))) });
 });
 
-router.delete('/:id', (req, res) => {
-  deleteWatchlist(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req));
+router.delete('/:id', async (req, res) => {
+  await deleteWatchlist(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req));
   res.json({ ok: true });
 });
 
-router.post('/:id/items', (req, res) => {
+router.post('/:id/items', async (req, res) => {
   const { symbol } = parse(z.object({ symbol: symbolParam() }), req.body);
-  res.status(201).json({ watchlist: addToWatchlist(currentUser(req).id, parse(idParam(), req.params.id), symbol, actorFrom(req)) });
+  res.status(201).json({ watchlist: (await addToWatchlist(currentUser(req).id, parse(idParam(), req.params.id), symbol, actorFrom(req))) });
 });
 
-router.delete('/:id/items/:symbol', (req, res) => {
-  const watchlist = removeFromWatchlist(
+router.delete('/:id/items/:symbol', async (req, res) => {
+  const watchlist = await removeFromWatchlist(
     currentUser(req).id,
     parse(idParam(), req.params.id),
     parse(symbolParam(), req.params.symbol),

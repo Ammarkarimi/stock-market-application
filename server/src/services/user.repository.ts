@@ -38,12 +38,12 @@ export interface UserDto {
   createdAt: string;
 }
 
-export function findUserById(id: number): UserRow | undefined {
-  return get<UserRow>('SELECT * FROM users WHERE id = ?', id);
+export async function findUserById(id: number): Promise<UserRow | undefined> {
+  return await get<UserRow>('SELECT * FROM users WHERE id = ?', id);
 }
 
-export function findUserByEmail(email: string): UserRow | undefined {
-  return get<UserRow>('SELECT * FROM users WHERE email = ?', email.trim().toLowerCase());
+export async function findUserByEmail(email: string): Promise<UserRow | undefined> {
+  return await get<UserRow>('SELECT * FROM users WHERE email = ?', email.trim().toLowerCase());
 }
 
 export function toUserDto(user: UserRow): UserDto {

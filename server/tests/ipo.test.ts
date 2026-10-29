@@ -45,8 +45,8 @@ function newOpenIpo(symbol: string, overrides: Partial<Parameters<typeof createI
 }
 
 /** Moves an IPO's window into the past so it is closed and ready for allotment. */
-function closeIpo(id: number) {
-  updateIpo(id, { openDate: addDays(today(), -5), closeDate: addDays(today(), -1), allotmentDate: today(), listingDate: addDays(today(), 1) }, SYSTEM_ACTOR);
+async function closeIpo(id: number) {
+  await updateIpo(id, { openDate: addDays(today(), -5), closeDate: addDays(today(), -1), allotmentDate: today(), listingDate: addDays(today(), 1) }, SYSTEM_ACTOR);
 }
 
 describe('IPO catalogue', () => {
@@ -109,20 +109,20 @@ describe('IPO applications', () => {
 describe('IPO allotment and listing', () => {
   it('allots in full when undersubscribed, debits funds and credits shares on listing', async () => {
     const { client, user } = await fundedInvestor();
-    const ipo = newOpenIpo('ALLOTFULL');
+    const ipo = await newOpenIpo('ALLOTFULL');
     const applied = await client.post(`/api/ipos/${ipo.id}/apply`, { lots: 2, cutoff: true, pin: DEFAULT_PIN });
     expect(applied.status).toBe(201);
-    closeIpo(ipo.id);
+    await closeIpo(ipo.id);
 
-    const result = allotIpo(ipo.id, SYSTEM_ACTOR, () => 0.99);
+    const result = await allotIpo(ipo.id, SYSTEM_ACTOR, () => 0.99);
     expect(result).toEqual({ applications: 1, allotted: 1 });
     const app = (await client.get('/api/ipos/applications')).body.applications[0];
     expect(app).toMatchObject({ status: 'ALLOTTED', allottedQuantity: 300, allotmentPrice: 100, amountDebited: 30_000, amountRefunded: 0 });
     const funds = (await client.get('/api/funds')).body;
     expect(funds).toMatchObject({ cashBalance: 270_000, blockedForIpos: 0 });
-    expect(get<{ entry_type: string }>("SELECT entry_type FROM ledger_entries WHERE user_id = ? ORDER BY id DESC LIMIT 1", user.id)!.entry_type).toBe('IPO_ALLOTMENT');
+    expect((await get<{ entry_type: string }>("SELECT entry_type FROM ledger_entries WHERE user_id = ? ORDER BY id DESC LIMIT 1", user.id))!.entry_type).toBe('IPO_ALLOTMENT');
 
-    const listing = listIpo(ipo.id, SYSTEM_ACTOR);
+    const listing = await listIpo(ipo.id, SYSTEM_ACTOR);
     expect(listing.credited).toBe(1);
     const holdings = (await client.get('/api/portfolio')).body.holdings;
     expect(holdings).toEqual([expect.objectContaining({ symbol: 'ALLOTFULL', quantity: 300, averagePrice: 100 })]);
@@ -139,16 +139,16 @@ describe('IPO allotment and listing', () => {
     const lucky = await fundedInvestor();
     const unlucky = await fundedInvestor();
     const lowBidder = await fundedInvestor();
-    const ipo = newOpenIpo('LOTTERY', { demand: { retail: 10, nii: 20, qib: 40 } });
+    const ipo = await newOpenIpo('LOTTERY', { demand: { retail: 10, nii: 20, qib: 40 } });
     await lucky.client.post(`/api/ipos/${ipo.id}/apply`, { lots: 3, cutoff: true, pin: DEFAULT_PIN });
     await unlucky.client.post(`/api/ipos/${ipo.id}/apply`, { lots: 1, cutoff: true, pin: DEFAULT_PIN });
     await lowBidder.client.post(`/api/ipos/${ipo.id}/apply`, { lots: 1, bidPrice: 96, pin: DEFAULT_PIN });
-    closeIpo(ipo.id);
+    await closeIpo(ipo.id);
     // Retail subscribed 10x: a draw below 0.1 wins one lot.
     const draws = [0.05, 0.5];
-    const result = allotIpo(ipo.id, SYSTEM_ACTOR, () => draws.shift() ?? 0.9);
+    const result = await allotIpo(ipo.id, SYSTEM_ACTOR, () => draws.shift() ?? 0.9);
     expect(result.allotted).toBe(1);
-    const apps = all<{ user_id: number; status: string; allotted_quantity: number; status_reason: string | null }>(
+    const apps = await all<{ user_id: number; status: string; allotted_quantity: number; status_reason: string | null }>(
       'SELECT user_id, status, allotted_quantity, status_reason FROM ipo_applications WHERE ipo_id = ? ORDER BY id',
       ipo.id,
     );
@@ -159,12 +159,12 @@ describe('IPO allotment and listing', () => {
     expect((await unlucky.client.get('/api/funds')).body.cashBalance).toBe(300_000);
   });
 
-  it('allots and lists automatically when the scheduled dates arrive', () => {
-    processIpoLifecycle();
-    const orbit = get<{ allotted_at: string | null; listed_at: string | null }>("SELECT allotted_at, listed_at FROM ipos WHERE symbol = 'ORBITAERO'")!;
+  it('allots and lists automatically when the scheduled dates arrive', async () => {
+    await processIpoLifecycle();
+    const orbit = (await get<{ allotted_at: string | null; listed_at: string | null }>("SELECT allotted_at, listed_at FROM ipos WHERE symbol = 'ORBITAERO'"))!;
     expect(orbit.allotted_at).not.toBeNull();
     expect(orbit.listed_at).toBeNull();
-    const kaveri = get<{ allotted_at: string | null }>("SELECT allotted_at FROM ipos WHERE symbol = 'KAVERIAGRO'")!;
+    const kaveri = (await get<{ allotted_at: string | null }>("SELECT allotted_at FROM ipos WHERE symbol = 'KAVERIAGRO'"))!;
     expect(kaveri.allotted_at).toBeNull();
   });
 });

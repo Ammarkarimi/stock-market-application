@@ -9,8 +9,8 @@ import { registerClient, type TestClient } from './helpers.js';
 let client: TestClient;
 
 beforeAll(async () => {
-  seedMarket({ years: 1 });
-  initMarket();
+  await seedMarket({ years: 1 });
+  await initMarket();
   ({ client } = await registerClient());
 });
 
@@ -74,9 +74,9 @@ describe('market data API', () => {
 });
 
 describe('price simulation', () => {
-  it('moves prices within circuit limits and keeps indices consistent', () => {
+  it('moves prices within circuit limits and keeps indices consistent', async () => {
     const before = getQuoteBySymbol('NIFTY50')!.last;
-    for (let i = 0; i < 50; i++) tick();
+    for (let i = 0; i < 50; i++) await tick();
     for (const q of allQuotes()) {
       if (q.type === 'INDEX') continue;
       const { lower, upper } = circuitLimits(q);
@@ -87,25 +87,25 @@ describe('price simulation', () => {
     expect(getQuoteBySymbol('NIFTY50')!.last).not.toBe(before);
   });
 
-  it('lets index-tracking ETFs follow their index', () => {
+  it('lets index-tracking ETFs follow their index', async () => {
     const bankBefore = getQuoteBySymbol('NIFTYBANK')!.last;
     const ratio = getQuoteBySymbol('BANKBEES')!.last / bankBefore;
     const hdfc = getQuoteBySymbol('HDFCBANK')!;
-    setPrice(hdfc.securityId, Math.round(hdfc.last * 1.05));
+    await setPrice(hdfc.securityId, Math.round(hdfc.last * 1.05));
     expect(getQuoteBySymbol('NIFTYBANK')!.last).toBeGreaterThan(bankBefore);
     expect(Math.abs(getQuoteBySymbol('BANKBEES')!.last / getQuoteBySymbol('NIFTYBANK')!.last - ratio) / ratio).toBeLessThan(0.01);
   });
 
-  it('rolls the trading day over into daily history', () => {
+  it('rolls the trading day over into daily history', async () => {
     const date = currentTradingDate();
     const tcs = getQuoteBySymbol('TCS')!;
     const lastPrice = tcs.last;
-    rollover(addDays(date, 1));
-    const row = get<{ close: number }>('SELECT close FROM price_history WHERE security_id = ? AND date = ?', tcs.securityId, date);
+    await rollover(addDays(date, 1));
+    const row = await get<{ close: number }>('SELECT close FROM price_history WHERE security_id = ? AND date = ?', tcs.securityId, date);
     expect(row?.close).toBe(lastPrice);
     expect(getQuoteBySymbol('TCS')!.prevClose).toBe(lastPrice);
     expect(getQuoteBySymbol('TCS')!.volume).toBe(0);
     expect(currentTradingDate()).toBe(addDays(date, 1));
-    expect(all('SELECT * FROM quotes WHERE trading_date != ?', addDays(date, 1))).toHaveLength(0);
+    expect(await all('SELECT * FROM quotes WHERE trading_date != ?', addDays(date, 1))).toHaveLength(0);
   });
 });

@@ -196,9 +196,9 @@ export interface IpoDto {
   applicationsCount?: number;
 }
 
-export function toIpoDto(row: IpoRow, userId?: number): IpoDto {
+export async function toIpoDto(row: IpoRow, userId?: number): Promise<IpoDto> {
   const application = userId
-    ? get<ApplicationRow>('SELECT * FROM ipo_applications WHERE ipo_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1', row.id, userId)
+    ? (await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE ipo_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1', row.id, userId))
     : undefined;
   const quote = row.security_id ? getQuote(row.security_id) : undefined;
   return {
@@ -238,8 +238,8 @@ export function toIpoDto(row: IpoRow, userId?: number): IpoDto {
   };
 }
 
-function requireIpo(id: number): IpoRow {
-  const row = get<IpoRow>('SELECT * FROM ipos WHERE id = ?', id);
+async function requireIpo(id: number): Promise<IpoRow> {
+  const row = await get<IpoRow>('SELECT * FROM ipos WHERE id = ?', id);
   if (!row) throw notFound('IPO not found');
   return row;
 }
@@ -247,8 +247,8 @@ function requireIpo(id: number): IpoRow {
 export type IpoListFilter = 'upcoming' | 'open' | 'closed' | 'all';
 
 /** Upcoming and open issues soonest first; completed issues most recent first. */
-export function listIpos(filter: IpoListFilter, userId?: number): IpoDto[] {
-  const rows = all<IpoRow>('SELECT * FROM ipos ORDER BY open_date');
+export async function listIpos(filter: IpoListFilter, userId?: number): Promise<IpoDto[]> {
+  const rows = await all<IpoRow>('SELECT * FROM ipos ORDER BY open_date');
   const groups: Record<IpoListFilter, IpoStatus[]> = {
     upcoming: ['UPCOMING'],
     open: ['OPEN'],
@@ -258,11 +258,13 @@ export function listIpos(filter: IpoListFilter, userId?: number): IpoDto[] {
   const statuses = groups[filter];
   const filtered = rows.filter((row) => statuses.includes(ipoStatus(row)));
   if (filter === 'closed') filtered.reverse();
-  return filtered.map((row) => toIpoDto(row, userId));
+  const dtos: IpoDto[] = [];
+  for (const row of filtered) dtos.push(await toIpoDto(row, userId));
+  return dtos;
 }
 
-export function getIpo(id: number, userId?: number): IpoDto {
-  return toIpoDto(requireIpo(id), userId);
+export async function getIpo(id: number, userId?: number): Promise<IpoDto> {
+  return await toIpoDto((await requireIpo(id)), userId);
 }
 
 export interface IpoApplicationInput {
@@ -272,7 +274,7 @@ export interface IpoApplicationInput {
   cutoff: boolean;
 }
 
-function validateApplication(ipo: IpoRow, input: IpoApplicationInput) {
+async function validateApplication(ipo: IpoRow, input: IpoApplicationInput) {
   if (ipoStatus(ipo) !== 'OPEN') throw unprocessable('IPO_NOT_OPEN', `${ipo.company_name} IPO is not open for applications`);
   if (!Number.isInteger(input.lots) || input.lots < ipo.min_lots || input.lots > ipo.max_lots) {
     throw badRequest(`Apply for between ${ipo.min_lots} and ${ipo.max_lots} lots of ${ipo.lot_size} shares`);
@@ -290,7 +292,7 @@ function validateApplication(ipo: IpoRow, input: IpoApplicationInput) {
   }
   const quantity = input.lots * ipo.lot_size;
   const amount = quantity * bid;
-  const limit = toPaise(getSetting('trading').ipoRetailLimit);
+  const limit = toPaise((await getSetting('trading')).ipoRetailLimit);
   if (amount > limit) throw badRequest(`Retail applications are limited to ${formatInr(limit)}`);
   return { quantity, bid, amount };
 }
@@ -302,22 +304,22 @@ export async function applyForIpo(
   pin: string | undefined,
   actor: Actor,
 ): Promise<ApplicationDto> {
-  validateApplication(requireIpo(ipoId), input);
+  await validateApplication((await requireIpo(ipoId)), input);
   await verifyTransactionPin(userId, pin, actor, 'IPO_APPLICATION');
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
-    const { quantity, bid, amount } = validateApplication(ipo, input);
-    if (get("SELECT 1 FROM ipo_applications WHERE ipo_id = ? AND user_id = ? AND status = 'APPLIED'", ipoId, userId)) {
+  return transaction(async () => {
+    const ipo = await requireIpo(ipoId);
+    const { quantity, bid, amount } = await validateApplication(ipo, input);
+    if ((await get("SELECT 1 FROM ipo_applications WHERE ipo_id = ? AND user_id = ? AND status = 'APPLIED'", ipoId, userId))) {
       throw conflict('You already have an active application for this IPO. Cancel it to apply again.');
     }
-    const available = availableBalance(userId);
+    const available = await availableBalance(userId);
     if (available < amount) {
       throw new AppError(422, 'INSUFFICIENT_FUNDS', `Insufficient funds: ${formatInr(amount)} required, ${formatInr(Math.max(0, available))} available`);
     }
     const now = nowIso();
     const applicationNo = referenceCode(`IPO-${ipo.symbol}`, istDate());
     const id = Number(
-      run(
+      (await run(
         `INSERT INTO ipo_applications (ipo_id, user_id, application_no, quantity, bid_price, is_cutoff, blocked_amount, status,
            created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'APPLIED', ?, ?)`,
@@ -330,16 +332,16 @@ export async function applyForIpo(
         amount,
         now,
         now,
-      ).lastInsertRowid,
+      )).lastInsertRowid,
     );
-    notify(
+    await notify(
       userId,
       'IPO',
       'IPO application submitted',
       `Applied for ${quantity} shares of ${ipo.company_name} at ${input.cutoff ? 'cut-off' : formatInr(bid)}. ${formatInr(amount)} is blocked until allotment on ${ipo.allotment_date}.`,
       `/ipo/${ipo.id}`,
     );
-    audit({
+    await audit({
       actor,
       action: 'IPO_APPLIED',
       subjectUserId: userId,
@@ -351,51 +353,53 @@ export async function applyForIpo(
       emitToUser(userId, 'ipo');
       emitToUser(userId, 'funds');
     });
-    return toApplicationDto(get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', id)!, ipo);
+    return toApplicationDto((await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', id))!, ipo);
   });
 }
 
-export function cancelIpoApplication(userId: number, applicationId: number, actor: Actor): ApplicationDto {
-  return transaction(() => {
-    const app = get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ? AND user_id = ?', applicationId, userId);
+export async function cancelIpoApplication(userId: number, applicationId: number, actor: Actor): Promise<ApplicationDto> {
+  return await transaction(async () => {
+    const app = await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ? AND user_id = ?', applicationId, userId);
     if (!app) throw notFound('Application not found');
-    const ipo = requireIpo(app.ipo_id);
+    const ipo = await requireIpo(app.ipo_id);
     if (app.status !== 'APPLIED') throw conflict('Only pending applications can be cancelled');
     if (ipoStatus(ipo) !== 'OPEN') throw conflict('Applications can only be cancelled while the IPO is open');
-    run(
+    await run(
       "UPDATE ipo_applications SET status = 'CANCELLED', status_reason = 'Cancelled by you', updated_at = ? WHERE id = ?",
       nowIso(),
       app.id,
     );
-    notify(userId, 'IPO', 'IPO application cancelled', `Your application for ${ipo.company_name} was cancelled and ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
-    audit({ actor, action: 'IPO_APPLICATION_CANCELLED', subjectUserId: userId, entityType: 'IPO_APPLICATION', entityId: app.id, details: { ipo: ipo.symbol } });
+    await notify(userId, 'IPO', 'IPO application cancelled', `Your application for ${ipo.company_name} was cancelled and ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
+    await audit({ actor, action: 'IPO_APPLICATION_CANCELLED', subjectUserId: userId, entityType: 'IPO_APPLICATION', entityId: app.id, details: { ipo: ipo.symbol } });
     afterCommit(() => {
       emitToUser(userId, 'ipo');
       emitToUser(userId, 'funds');
     });
-    return toApplicationDto(get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', app.id)!, ipo);
+    return toApplicationDto((await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', app.id))!, ipo);
   });
 }
 
-export function listMyApplications(userId: number): ApplicationDto[] {
-  return all<ApplicationRow>('SELECT * FROM ipo_applications WHERE user_id = ? ORDER BY id DESC', userId).map((app) =>
-    toApplicationDto(app, requireIpo(app.ipo_id)),
-  );
+export async function listMyApplications(userId: number): Promise<ApplicationDto[]> {
+  const dtos: ApplicationDto[] = [];
+  for (const app of await all<ApplicationRow>('SELECT * FROM ipo_applications WHERE user_id = ? ORDER BY id DESC', userId)) {
+    dtos.push(toApplicationDto(app, await requireIpo(app.ipo_id)));
+  }
+  return dtos;
 }
 
-export function listIpoApplications(ipoId: number) {
-  const ipo = requireIpo(ipoId);
-  return all<ApplicationRow & { full_name: string; email: string }>(
+export async function listIpoApplications(ipoId: number) {
+  const ipo = await requireIpo(ipoId);
+  return (await all<ApplicationRow & { full_name: string; email: string }>(
     `SELECT a.*, u.full_name, u.email FROM ipo_applications a JOIN users u ON u.id = a.user_id WHERE a.ipo_id = ? ORDER BY a.id`,
     ipoId,
-  ).map((app) => ({ ...toApplicationDto(app, ipo), userId: app.user_id, userName: app.full_name, userEmail: app.email }));
+  )).map((app) => ({ ...toApplicationDto(app, ipo), userId: app.user_id, userName: app.full_name, userEmail: app.email }));
 }
 
 /** Locks in the final simulated subscription figures (bidding has closed) unless an admin set them by hand. */
-function finalizeSubscription(ipo: IpoRow): IpoRow {
+async function finalizeSubscription(ipo: IpoRow): Promise<IpoRow> {
   const profile = ipo.demand_profile ? (JSON.parse(ipo.demand_profile) as DemandProfile) : null;
   if (!profile || profile.manual) return ipo;
-  run(
+  await run(
     'UPDATE ipos SET subscription_retail = ?, subscription_nii = ?, subscription_qib = ?, updated_at = ? WHERE id = ?',
     profile.retail,
     profile.nii,
@@ -412,24 +416,24 @@ function finalizeSubscription(ipo: IpoRow): IpoRow {
  * debited at the issue price and the rest of the blocked funds is released.
  */
 export function allotIpo(ipoId: number, actor: Actor, random: () => number = () => crypto.randomInt(0, 1_000_000) / 1_000_000) {
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
+  return transaction(async () => {
+    const ipo = await requireIpo(ipoId);
     const status = ipoStatus(ipo);
     if (status !== 'CLOSED') throw conflict(`Allotment can only run after the IPO closes (current status: ${status})`);
     const issuePrice = ipo.issue_price ?? ipo.price_band_high;
-    const ratio = Math.max(finalizeSubscription(ipo).subscription_retail, 0.0001);
-    const applications = all<ApplicationRow>("SELECT * FROM ipo_applications WHERE ipo_id = ? AND status = 'APPLIED' ORDER BY id", ipoId);
+    const ratio = Math.max((await finalizeSubscription(ipo)).subscription_retail, 0.0001);
+    const applications = await all<ApplicationRow>("SELECT * FROM ipo_applications WHERE ipo_id = ? AND status = 'APPLIED' ORDER BY id", ipoId);
     let allottedCount = 0;
     for (const app of applications) {
       const now = nowIso();
       if (!app.is_cutoff && app.bid_price < issuePrice) {
-        run(
+        await run(
           "UPDATE ipo_applications SET status = 'NOT_ALLOTTED', status_reason = ?, updated_at = ? WHERE id = ?",
           'Bid price below the final issue price',
           now,
           app.id,
         );
-        notify(app.user_id, 'IPO', `${ipo.company_name}: not allotted`, `Your bid was below the issue price of ${formatInr(issuePrice)}. ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
+        await notify(app.user_id, 'IPO', `${ipo.company_name}: not allotted`, `Your bid was below the issue price of ${formatInr(issuePrice)}. ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
         continue;
       }
       const appliedLots = app.quantity / ipo.lot_size;
@@ -437,7 +441,7 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
       if (lots > 0) {
         const quantity = lots * ipo.lot_size;
         const debit = quantity * issuePrice;
-        run(
+        await run(
           `UPDATE ipo_applications SET status = 'ALLOTTED', status_reason = NULL, allotted_quantity = ?, allotment_price = ?,
              amount_debited = ?, updated_at = ? WHERE id = ?`,
           quantity,
@@ -446,7 +450,7 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
           now,
           app.id,
         );
-        postLedger(app.user_id, {
+        await postLedger(app.user_id, {
           type: 'IPO_ALLOTMENT',
           amount: -debit,
           referenceType: 'IPO_APPLICATION',
@@ -454,7 +458,7 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
           description: `IPO allotment: ${quantity} ${ipo.symbol} @ ${formatInr(issuePrice)} (${app.application_no})`,
         });
         const refund = app.blocked_amount - debit;
-        notify(
+        await notify(
           app.user_id,
           'IPO',
           `${ipo.company_name}: shares allotted 🎉`,
@@ -463,15 +467,15 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
         );
         allottedCount++;
       } else {
-        run(
+        await run(
           "UPDATE ipo_applications SET status = 'NOT_ALLOTTED', status_reason = ?, updated_at = ? WHERE id = ?",
           `Not selected in the allotment lottery (retail subscribed ${round2(ratio)}x)`,
           now,
           app.id,
         );
-        notify(app.user_id, 'IPO', `${ipo.company_name}: not allotted`, `Your application was not selected in the lottery. ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
+        await notify(app.user_id, 'IPO', `${ipo.company_name}: not allotted`, `Your application was not selected in the lottery. ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
       }
-      audit({
+      await audit({
         actor,
         action: 'IPO_ALLOTMENT_RESULT',
         subjectUserId: app.user_id,
@@ -484,8 +488,8 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
         emitToUser(app.user_id, 'funds');
       });
     }
-    run('UPDATE ipos SET allotted_at = ?, issue_price = ?, updated_at = ? WHERE id = ?', nowIso(), issuePrice, nowIso(), ipoId);
-    audit({
+    await run('UPDATE ipos SET allotted_at = ?, issue_price = ?, updated_at = ? WHERE id = ?', nowIso(), issuePrice, nowIso(), ipoId);
+    await audit({
       actor,
       action: 'IPO_ALLOTTED',
       subjectUserId: null,
@@ -521,7 +525,7 @@ export function listingFundamentals(ipo: IpoRow, issuePrice: number): Record<str
 }
 
 /** Creates the tradable security for a newly listed IPO with fundamentals derived from its prospectus. */
-function createListedSecurity(ipo: IpoRow, issuePrice: number, listingPrice: number): number {
+async function createListedSecurity(ipo: IpoRow, issuePrice: number, listingPrice: number): Promise<number> {
   const fundamentals = listingFundamentals(ipo, issuePrice);
   const issueShares = Math.round((fundamentals.shares_outstanding as number) * IPO_FLOAT_FRACTION);
   const now = nowIso();
@@ -545,11 +549,11 @@ function createListedSecurity(ipo: IpoRow, issuePrice: number, listingPrice: num
   };
   const keys = Object.keys(columns);
   const securityId = Number(
-    run(`INSERT INTO securities (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...keys.map((k) => columns[k]))
+    (await run(`INSERT INTO securities (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...keys.map((k) => columns[k])))
       .lastInsertRowid,
   );
   const price = Math.round(listingPrice / tick) * tick;
-  run(
+  await run(
     `INSERT INTO quotes (security_id, last_price, prev_close, open, high, low, volume, turnover, trading_date, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
     securityId,
@@ -565,14 +569,14 @@ function createListedSecurity(ipo: IpoRow, issuePrice: number, listingPrice: num
 }
 
 /** Records allotted shares in a user's holdings with an IPO trade at the issue price. */
-export function creditAllottedShares(app: ApplicationRow, securityId: number, tradingDate: string = currentTradingDate()): void {
+export async function creditAllottedShares(app: ApplicationRow, securityId: number, tradingDate: string = currentTradingDate()): Promise<void> {
   const now = nowIso();
   const value = app.allotted_quantity * app.allotment_price!;
-  run(
+  await run(
     `INSERT INTO holdings (user_id, security_id, quantity, invested, realized_pnl, first_bought_at, updated_at)
      VALUES (?, ?, ?, ?, 0, ?, ?)
-     ON CONFLICT(user_id, security_id) DO UPDATE SET quantity = quantity + excluded.quantity,
-       invested = invested + excluded.invested, updated_at = excluded.updated_at`,
+     ON CONFLICT(user_id, security_id) DO UPDATE SET quantity = holdings.quantity + excluded.quantity,
+       invested = holdings.invested + excluded.invested, updated_at = excluded.updated_at`,
     app.user_id,
     securityId,
     app.allotted_quantity,
@@ -580,7 +584,7 @@ export function creditAllottedShares(app: ApplicationRow, securityId: number, tr
     now,
     now,
   );
-  run(
+  await run(
     `INSERT INTO trades (order_id, source, user_id, security_id, side, quantity, price, value, brokerage, stt, exchange_charges,
        sebi_fees, stamp_duty, gst, total_charges, net_amount, realized_pnl, trading_date, executed_at)
      VALUES (NULL, 'IPO', ?, ?, 'BUY', ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, ?, NULL, ?, ?)`,
@@ -593,24 +597,24 @@ export function creditAllottedShares(app: ApplicationRow, securityId: number, tr
     tradingDate,
     now,
   );
-  run('UPDATE ipo_applications SET shares_credited_at = ?, updated_at = ? WHERE id = ?', now, now, app.id);
+  await run('UPDATE ipo_applications SET shares_credited_at = ?, updated_at = ? WHERE id = ?', now, now, app.id);
 }
 
 /** Lists the IPO: creates (or links) the security, sets the listing price and credits allottees. */
 export function listIpo(ipoId: number, actor: Actor) {
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
+  return transaction(async () => {
+    const ipo = await requireIpo(ipoId);
     const status = ipoStatus(ipo);
     if (status !== 'ALLOTTED') throw conflict(`Only allotted IPOs can be listed (current status: ${status})`);
     const issuePrice = ipo.issue_price ?? ipo.price_band_high;
-    const existing = get<{ id: number }>('SELECT id FROM securities WHERE symbol = ?', ipo.symbol);
+    const existing = await get<{ id: number }>('SELECT id FROM securities WHERE symbol = ?', ipo.symbol);
     let securityId: number;
     let listingPrice: number;
     if (existing) {
       securityId = existing.id;
       listingPrice =
         ipo.listing_price ??
-        get<{ open: number }>('SELECT open FROM price_history WHERE security_id = ? ORDER BY date LIMIT 1', securityId)?.open ??
+        (await get<{ open: number }>('SELECT open FROM price_history WHERE security_id = ? ORDER BY date LIMIT 1', securityId))?.open ??
         getQuote(securityId)?.open ??
         issuePrice;
     } else {
@@ -618,19 +622,19 @@ export function listIpo(ipoId: number, actor: Actor) {
       const demand = Math.min(overallSubscription(ipo), 100);
       const gain = clamp(0.02 + demand * 0.004 + gaussian() * 0.1, -0.2, 0.8);
       listingPrice = ipo.listing_price ?? Math.round(issuePrice * (1 + gain));
-      securityId = createListedSecurity(ipo, issuePrice, listingPrice);
-      listingPrice = get<{ last_price: number }>('SELECT last_price FROM quotes WHERE security_id = ?', securityId)!.last_price;
+      securityId = await createListedSecurity(ipo, issuePrice, listingPrice);
+      listingPrice = (await get<{ last_price: number }>('SELECT last_price FROM quotes WHERE security_id = ?', securityId))!.last_price;
     }
     const now = nowIso();
-    run('UPDATE ipos SET listed_at = ?, listing_price = ?, security_id = ?, updated_at = ? WHERE id = ?', now, listingPrice, securityId, now, ipoId);
+    await run('UPDATE ipos SET listed_at = ?, listing_price = ?, security_id = ?, updated_at = ? WHERE id = ?', now, listingPrice, securityId, now, ipoId);
 
-    const allottees = all<ApplicationRow>(
+    const allottees = await all<ApplicationRow>(
       "SELECT * FROM ipo_applications WHERE ipo_id = ? AND status = 'ALLOTTED' AND shares_credited_at IS NULL",
       ipoId,
     );
     for (const app of allottees) {
-      creditAllottedShares(app, securityId);
-      notify(
+      await creditAllottedShares(app, securityId);
+      await notify(
         app.user_id,
         'IPO',
         `${ipo.company_name} listed`,
@@ -642,7 +646,7 @@ export function listIpo(ipoId: number, actor: Actor) {
         emitToUser(app.user_id, 'ipo');
       });
     }
-    audit({
+    await audit({
       actor,
       action: 'IPO_LISTED',
       subjectUserId: null,
@@ -650,9 +654,9 @@ export function listIpo(ipoId: number, actor: Actor) {
       entityId: ipoId,
       details: { symbol: ipo.symbol, listingPrice: toRupees(listingPrice), issuePrice: toRupees(issuePrice), credited: allottees.length },
     });
-    afterCommit(() => {
-      invalidateSecurityCache();
-      reloadQuote(securityId);
+    afterCommit(async () => {
+      await invalidateSecurityCache();
+      await reloadQuote(securityId);
     });
     return { securityId, listingPrice: toRupees(listingPrice), credited: allottees.length };
   });
@@ -669,8 +673,8 @@ function biddingProgress(ipo: IpoRow, at: number): number {
  * Simulated market demand: subscriptions build up over the bidding window, with institutions bidding
  * mostly on the last day, converging to the issue's demand profile.
  */
-export function simulateSubscriptions(at: number = nowMs()): void {
-  for (const ipo of all<IpoRow>('SELECT * FROM ipos WHERE allotted_at IS NULL AND withdrawn_at IS NULL')) {
+export async function simulateSubscriptions(at: number = nowMs()): Promise<void> {
+  for (const ipo of await all<IpoRow>('SELECT * FROM ipos WHERE allotted_at IS NULL AND withdrawn_at IS NULL')) {
     const status = ipoStatus(ipo, istDate(at));
     if (status !== 'OPEN' && status !== 'CLOSED') continue;
     const profile = ipo.demand_profile ? (JSON.parse(ipo.demand_profile) as DemandProfile) : null;
@@ -680,7 +684,7 @@ export function simulateSubscriptions(at: number = nowMs()): void {
     const nii = round2(profile.nii * p ** 2.5);
     const qib = round2(profile.qib * p ** 3.2);
     if (retail === ipo.subscription_retail && nii === ipo.subscription_nii && qib === ipo.subscription_qib) continue;
-    run(
+    await run(
       'UPDATE ipos SET subscription_retail = ?, subscription_nii = ?, subscription_qib = ?, updated_at = ? WHERE id = ?',
       retail,
       nii,
@@ -692,16 +696,16 @@ export function simulateSubscriptions(at: number = nowMs()): void {
 }
 
 /** Scheduled job: announces newly opened IPOs and runs allotment and listing when their dates arrive. */
-export function processIpoLifecycle(): void {
+export async function processIpoLifecycle(): Promise<void> {
   const today = istDate();
-  simulateSubscriptions();
-  for (const ipo of all<IpoRow>('SELECT * FROM ipos WHERE withdrawn_at IS NULL AND listed_at IS NULL')) {
+  await simulateSubscriptions();
+  for (const ipo of await all<IpoRow>('SELECT * FROM ipos WHERE withdrawn_at IS NULL AND listed_at IS NULL')) {
     const status = ipoStatus(ipo, today);
     try {
       if (status === 'OPEN' && !ipo.open_notified_at) {
-        transaction(() => {
-          run('UPDATE ipos SET open_notified_at = ? WHERE id = ?', nowIso(), ipo.id);
-          notifyAllUsers(
+        await transaction(async () => {
+          await run('UPDATE ipos SET open_notified_at = ? WHERE id = ?', nowIso(), ipo.id);
+          await notifyAllUsers(
             'IPO',
             `${ipo.company_name} IPO is open`,
             `Bid between ${formatInr(ipo.price_band_low)} and ${formatInr(ipo.price_band_high)} in lots of ${ipo.lot_size} shares until ${ipo.close_date}.`,
@@ -709,9 +713,9 @@ export function processIpoLifecycle(): void {
           );
         });
       } else if (status === 'CLOSED' && ipo.allotment_date <= today) {
-        allotIpo(ipo.id, SYSTEM_ACTOR);
+        await allotIpo(ipo.id, SYSTEM_ACTOR);
       } else if (status === 'ALLOTTED' && ipo.listing_date <= today) {
-        listIpo(ipo.id, SYSTEM_ACTOR);
+        await listIpo(ipo.id, SYSTEM_ACTOR);
       }
     } catch (err) {
       console.error(`IPO lifecycle step failed for ${ipo.symbol}`, err);
@@ -758,15 +762,15 @@ function randomDemand(): DemandProfile {
   return { retail: round2(base), nii: round2(base * (1.5 + Math.random() * 2)), qib: round2(base * (2 + Math.random() * 5)) };
 }
 
-export function createIpo(input: IpoInput, actor: Actor): IpoDto {
+export async function createIpo(input: IpoInput, actor: Actor): Promise<IpoDto> {
   validateIpoInput(input);
-  if (get('SELECT 1 FROM ipos WHERE symbol = ?', input.symbol) || get('SELECT 1 FROM securities WHERE symbol = ?', input.symbol)) {
+  if ((await get('SELECT 1 FROM ipos WHERE symbol = ?', input.symbol)) || (await get('SELECT 1 FROM securities WHERE symbol = ?', input.symbol))) {
     throw conflict(`Symbol ${input.symbol} is already in use`);
   }
-  return transaction(() => {
+  return await transaction(async () => {
     const now = nowIso();
     const id = Number(
-      run(
+      (await run(
         `INSERT INTO ipos (company_name, symbol, issue_type, sector, industry, description, price_band_low, price_band_high, lot_size,
            min_lots, max_lots, issue_size_cr, fresh_issue_cr, ofs_cr, open_date, close_date, allotment_date, refund_date,
            listing_date, demand_profile, financials, registrar, lead_managers, created_at, updated_at)
@@ -796,16 +800,16 @@ export function createIpo(input: IpoInput, actor: Actor): IpoDto {
         JSON.stringify(input.leadManagers ?? []),
         now,
         now,
-      ).lastInsertRowid,
+      )).lastInsertRowid,
     );
-    audit({ actor, action: 'IPO_CREATED', subjectUserId: null, entityType: 'IPO', entityId: id, details: { symbol: input.symbol, companyName: input.companyName } });
-    return toIpoDto(requireIpo(id));
+    await audit({ actor, action: 'IPO_CREATED', subjectUserId: null, entityType: 'IPO', entityId: id, details: { symbol: input.symbol, companyName: input.companyName } });
+    return toIpoDto((await requireIpo(id)));
   });
 }
 
-export function updateIpo(ipoId: number, input: Partial<IpoInput>, actor: Actor): IpoDto {
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
+export async function updateIpo(ipoId: number, input: Partial<IpoInput>, actor: Actor): Promise<IpoDto> {
+  return await transaction(async () => {
+    const ipo = await requireIpo(ipoId);
     const status = ipoStatus(ipo);
     if (status === 'ALLOTTED' || status === 'LISTED' || status === 'WITHDRAWN') {
       throw conflict(`An IPO that is ${status.toLowerCase()} can no longer be edited`);
@@ -841,7 +845,7 @@ export function updateIpo(ipoId: number, input: Partial<IpoInput>, actor: Actor)
       financials: input.financials ?? (ipo.financials ? JSON.parse(ipo.financials) : []),
     };
     validateIpoInput(merged);
-    run(
+    await run(
       `UPDATE ipos SET company_name = ?, issue_type = ?, sector = ?, industry = ?, description = ?, price_band_low = ?,
          price_band_high = ?, lot_size = ?, min_lots = ?, max_lots = ?, issue_size_cr = ?, fresh_issue_cr = ?, ofs_cr = ?,
          open_date = ?, close_date = ?, allotment_date = ?, refund_date = ?, listing_date = ?, registrar = ?, lead_managers = ?,
@@ -871,17 +875,17 @@ export function updateIpo(ipoId: number, input: Partial<IpoInput>, actor: Actor)
       nowIso(),
       ipoId,
     );
-    audit({ actor, action: 'IPO_UPDATED', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: { fields: Object.keys(input) } });
-    return toIpoDto(requireIpo(ipoId));
+    await audit({ actor, action: 'IPO_UPDATED', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: { fields: Object.keys(input) } });
+    return toIpoDto((await requireIpo(ipoId)));
   });
 }
 
 /** Admin override of subscription figures; stops the demand simulation for this IPO. */
-export function setSubscription(ipoId: number, values: { retail: number; nii: number; qib: number }, actor: Actor): IpoDto {
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
+export async function setSubscription(ipoId: number, values: { retail: number; nii: number; qib: number }, actor: Actor): Promise<IpoDto> {
+  return await transaction(async () => {
+    const ipo = await requireIpo(ipoId);
     if (ipo.allotted_at) throw conflict('Subscription figures are final after allotment');
-    run(
+    await run(
       'UPDATE ipos SET subscription_retail = ?, subscription_nii = ?, subscription_qib = ?, demand_profile = ?, updated_at = ? WHERE id = ?',
       values.retail,
       values.nii,
@@ -890,38 +894,41 @@ export function setSubscription(ipoId: number, values: { retail: number; nii: nu
       nowIso(),
       ipoId,
     );
-    audit({ actor, action: 'IPO_SUBSCRIPTION_UPDATED', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: values });
-    return toIpoDto(requireIpo(ipoId));
+    await audit({ actor, action: 'IPO_SUBSCRIPTION_UPDATED', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: values });
+    return toIpoDto((await requireIpo(ipoId)));
   });
 }
 
 /** Withdraws an issue before allotment and releases every pending application. */
-export function withdrawIpo(ipoId: number, reason: string, actor: Actor): IpoDto {
-  return transaction(() => {
-    const ipo = requireIpo(ipoId);
+export async function withdrawIpo(ipoId: number, reason: string, actor: Actor): Promise<IpoDto> {
+  return await transaction(async () => {
+    const ipo = await requireIpo(ipoId);
     const status = ipoStatus(ipo);
     if (status === 'ALLOTTED' || status === 'LISTED' || status === 'WITHDRAWN') {
       throw conflict(`An IPO that is ${status.toLowerCase()} cannot be withdrawn`);
     }
     const now = nowIso();
-    const pending = all<ApplicationRow>("SELECT * FROM ipo_applications WHERE ipo_id = ? AND status = 'APPLIED'", ipoId);
+    const pending = await all<ApplicationRow>("SELECT * FROM ipo_applications WHERE ipo_id = ? AND status = 'APPLIED'", ipoId);
     for (const app of pending) {
-      run("UPDATE ipo_applications SET status = 'CANCELLED', status_reason = ?, updated_at = ? WHERE id = ?", `IPO withdrawn: ${reason}`, now, app.id);
-      notify(app.user_id, 'IPO', `${ipo.company_name} IPO withdrawn`, `The issue was withdrawn (${reason}). ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
+      await run("UPDATE ipo_applications SET status = 'CANCELLED', status_reason = ?, updated_at = ? WHERE id = ?", `IPO withdrawn: ${reason}`, now, app.id);
+      await notify(app.user_id, 'IPO', `${ipo.company_name} IPO withdrawn`, `The issue was withdrawn (${reason}). ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
       afterCommit(() => {
         emitToUser(app.user_id, 'ipo');
         emitToUser(app.user_id, 'funds');
       });
     }
-    run('UPDATE ipos SET withdrawn_at = ?, updated_at = ? WHERE id = ?', now, now, ipoId);
-    audit({ actor, action: 'IPO_WITHDRAWN', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: { reason, releasedApplications: pending.length } });
-    return toIpoDto(requireIpo(ipoId));
+    await run('UPDATE ipos SET withdrawn_at = ?, updated_at = ? WHERE id = ?', now, now, ipoId);
+    await audit({ actor, action: 'IPO_WITHDRAWN', subjectUserId: null, entityType: 'IPO', entityId: ipoId, details: { reason, releasedApplications: pending.length } });
+    return toIpoDto((await requireIpo(ipoId)));
   });
 }
 
-export function listAllIposForAdmin(): IpoDto[] {
-  return all<IpoRow>('SELECT * FROM ipos ORDER BY open_date DESC').map((row) => ({
-    ...toIpoDto(row),
-    applicationsCount: get<{ n: number }>('SELECT COUNT(*) AS n FROM ipo_applications WHERE ipo_id = ?', row.id)!.n,
-  }));
+export async function listAllIposForAdmin(): Promise<IpoDto[]> {
+  const dtos: IpoDto[] = [];
+  for (const row of await all<IpoRow & { applications_count: number }>(
+    'SELECT i.*, (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) AS applications_count FROM ipos i ORDER BY i.open_date DESC',
+  )) {
+    dtos.push({ ...(await toIpoDto(row)), applicationsCount: row.applications_count });
+  }
+  return dtos;
 }

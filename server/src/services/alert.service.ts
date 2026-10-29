@@ -62,8 +62,8 @@ function toDto(row: AlertRow): AlertDto {
   };
 }
 
-function requireAlert(userId: number, id: number): AlertRow {
-  const row = get<AlertRow>('SELECT * FROM price_alerts WHERE id = ? AND user_id = ?', id, userId);
+async function requireAlert(userId: number, id: number): Promise<AlertRow> {
+  const row = await get<AlertRow>('SELECT * FROM price_alerts WHERE id = ? AND user_id = ?', id, userId);
   if (!row) throw notFound('Alert not found');
   return row;
 }
@@ -78,12 +78,12 @@ function validateTarget(quote: LiveQuote, condition: AlertCondition, target: num
   }
 }
 
-function ensureCapacity(userId: number): void {
-  const active = get<{ n: number }>("SELECT COUNT(*) AS n FROM price_alerts WHERE user_id = ? AND status = 'ACTIVE'", userId)!.n;
+async function ensureCapacity(userId: number): Promise<void> {
+  const active = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM price_alerts WHERE user_id = ? AND status = 'ACTIVE'", userId))!.n;
   if (active >= MAX_ACTIVE_ALERTS) throw unprocessable('LIMIT_REACHED', `You can have at most ${MAX_ACTIVE_ALERTS} active alerts`);
 }
 
-export function listAlerts(userId: number, query: { status?: AlertStatus; symbol?: string } = {}): AlertDto[] {
+export async function listAlerts(userId: number, query: { status?: AlertStatus; symbol?: string } = {}): Promise<AlertDto[]> {
   const where = ['user_id = ?'];
   const params: unknown[] = [userId];
   if (query.status) (where.push('status = ?'), params.push(query.status));
@@ -93,7 +93,7 @@ export function listAlerts(userId: number, query: { status?: AlertStatus; symbol
     where.push('security_id = ?');
     params.push(quote.securityId);
   }
-  return all<AlertRow>(`SELECT * FROM price_alerts WHERE ${where.join(' AND ')} ORDER BY status = 'ACTIVE' DESC, id DESC`, ...params).map(toDto);
+  return (await all<AlertRow>(`SELECT * FROM price_alerts WHERE ${where.join(' AND ')} ORDER BY status = 'ACTIVE' DESC, id DESC`, ...params)).map(toDto);
 }
 
 export interface AlertInput {
@@ -104,15 +104,15 @@ export interface AlertInput {
   note?: string | null;
 }
 
-export function createAlert(userId: number, input: AlertInput, actor: Actor): AlertDto {
+export async function createAlert(userId: number, input: AlertInput, actor: Actor): Promise<AlertDto> {
   const quote = getQuoteBySymbol(input.symbol);
   if (!quote) throw notFound(`Security ${input.symbol.toUpperCase()} not found`);
   validateTarget(quote, input.condition, input.targetPrice);
-  return transaction(() => {
-    ensureCapacity(userId);
+  return await transaction(async () => {
+    await ensureCapacity(userId);
     const now = nowIso();
     const id = Number(
-      run(
+      (await run(
         `INSERT INTO price_alerts (user_id, security_id, condition, target_price, status, note, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
         userId,
@@ -122,11 +122,11 @@ export function createAlert(userId: number, input: AlertInput, actor: Actor): Al
         input.note?.trim() || null,
         now,
         now,
-      ).lastInsertRowid,
+      )).lastInsertRowid,
     );
-    audit({ actor, action: 'ALERT_CREATED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { symbol: quote.symbol, condition: input.condition, targetPrice: toRupees(input.targetPrice) } });
+    await audit({ actor, action: 'ALERT_CREATED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { symbol: quote.symbol, condition: input.condition, targetPrice: toRupees(input.targetPrice) } });
     afterCommit(() => emitToUser(userId, 'alert'));
-    return toDto(requireAlert(userId, id));
+    return toDto((await requireAlert(userId, id)));
   });
 }
 
@@ -138,18 +138,18 @@ export interface AlertUpdate {
 }
 
 /** Edits an alert. Setting status ACTIVE re-arms a triggered or disabled alert. */
-export function updateAlert(userId: number, id: number, update: AlertUpdate, actor: Actor): AlertDto {
-  return transaction(() => {
-    const row = requireAlert(userId, id);
+export async function updateAlert(userId: number, id: number, update: AlertUpdate, actor: Actor): Promise<AlertDto> {
+  return await transaction(async () => {
+    const row = await requireAlert(userId, id);
     const quote = getQuote(row.security_id)!;
     const condition = update.condition ?? row.condition;
     const target = update.targetPrice ?? row.target_price;
     const status = update.status ?? (row.status === 'TRIGGERED' && (update.targetPrice || update.condition) ? 'ACTIVE' : row.status);
     if (status === 'ACTIVE') {
       validateTarget(quote, condition, target);
-      if (row.status !== 'ACTIVE') ensureCapacity(userId);
+      if (row.status !== 'ACTIVE') await ensureCapacity(userId);
     }
-    run(
+    await run(
       `UPDATE price_alerts SET condition = ?, target_price = ?, status = ?, note = ?, updated_at = ?,
          triggered_price = CASE WHEN ? = 'ACTIVE' THEN NULL ELSE triggered_price END,
          triggered_at = CASE WHEN ? = 'ACTIVE' THEN NULL ELSE triggered_at END
@@ -163,35 +163,35 @@ export function updateAlert(userId: number, id: number, update: AlertUpdate, act
       status,
       id,
     );
-    audit({ actor, action: 'ALERT_UPDATED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { status, condition, targetPrice: toRupees(target) } });
+    await audit({ actor, action: 'ALERT_UPDATED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { status, condition, targetPrice: toRupees(target) } });
     afterCommit(() => emitToUser(userId, 'alert'));
-    return toDto(requireAlert(userId, id));
+    return toDto((await requireAlert(userId, id)));
   });
 }
 
-export function deleteAlert(userId: number, id: number, actor: Actor): void {
-  transaction(() => {
-    const row = requireAlert(userId, id);
-    run('DELETE FROM price_alerts WHERE id = ?', id);
-    audit({ actor, action: 'ALERT_DELETED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { symbol: getQuote(row.security_id)?.symbol } });
+export async function deleteAlert(userId: number, id: number, actor: Actor): Promise<void> {
+  await transaction(async () => {
+    const row = await requireAlert(userId, id);
+    await run('DELETE FROM price_alerts WHERE id = ?', id);
+    await audit({ actor, action: 'ALERT_DELETED', subjectUserId: userId, entityType: 'ALERT', entityId: id, details: { symbol: getQuote(row.security_id)?.symbol } });
     afterCommit(() => emitToUser(userId, 'alert'));
   });
 }
 
 /** Triggers alerts whose condition is met by the latest prices. Registered as a market tick listener. */
-export function checkAlerts(changed: LiveQuote[]): number {
+export async function checkAlerts(changed: LiveQuote[]): Promise<number> {
   if (changed.length === 0) return 0;
   const ids = new Set(changed.map((q) => q.securityId));
-  const active = all<AlertRow>("SELECT * FROM price_alerts WHERE status = 'ACTIVE'").filter((a) => ids.has(a.security_id));
+  const active = (await all<AlertRow>("SELECT * FROM price_alerts WHERE status = 'ACTIVE'")).filter((a) => ids.has(a.security_id));
   let triggered = 0;
   for (const alert of active) {
     const quote = getQuote(alert.security_id);
     if (!quote) continue;
     const hit = alert.condition === 'ABOVE' ? quote.last >= alert.target_price : quote.last <= alert.target_price;
     if (!hit) continue;
-    transaction(() => {
+    await transaction(async () => {
       const now = nowIso();
-      run(
+      await run(
         "UPDATE price_alerts SET status = 'TRIGGERED', triggered_price = ?, triggered_at = ?, updated_at = ? WHERE id = ? AND status = 'ACTIVE'",
         quote.last,
         now,
@@ -199,14 +199,14 @@ export function checkAlerts(changed: LiveQuote[]): number {
         alert.id,
       );
       const direction = alert.condition === 'ABOVE' ? 'risen above' : 'fallen below';
-      notify(
+      await notify(
         alert.user_id,
         'PRICE_ALERT',
         `${quote.symbol} price alert`,
         `${quote.symbol} has ${direction} ${formatInr(alert.target_price)}. Current price: ${formatInr(quote.last)}.${alert.note ? ` Note: ${alert.note}` : ''}`,
         `/stocks/${encodeURIComponent(quote.symbol)}`,
       );
-      audit({ actor: SYSTEM_ACTOR, action: 'ALERT_TRIGGERED', subjectUserId: alert.user_id, entityType: 'ALERT', entityId: alert.id, details: { symbol: quote.symbol, price: toRupees(quote.last) } });
+      await audit({ actor: SYSTEM_ACTOR, action: 'ALERT_TRIGGERED', subjectUserId: alert.user_id, entityType: 'ALERT', entityId: alert.id, details: { symbol: quote.symbol, price: toRupees(quote.last) } });
       afterCommit(() => emitToUser(alert.user_id, 'alert'));
     });
     triggered++;

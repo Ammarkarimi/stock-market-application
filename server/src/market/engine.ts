@@ -111,8 +111,8 @@ function resetState(q: LiveQuote): void {
   priceState.set(q.securityId, { logAnchor: Math.log(q.last), deviation: 0, driftPerTick: 0 });
 }
 
-function loadIndexComponents(): void {
-  const rows = all<{ index_id: number; security_id: number; weight: number; base_price: number }>(
+async function loadIndexComponents(): Promise<void> {
+  const rows = await all<{ index_id: number; security_id: number; weight: number; base_price: number }>(
     'SELECT index_id, security_id, weight, base_price FROM index_constituents',
   );
   indexComponents = new Map();
@@ -123,18 +123,18 @@ function loadIndexComponents(): void {
   }
 }
 
-function indexBaseValue(indexId: number): number {
-  return all<{ index_base_value: number }>('SELECT index_base_value FROM securities WHERE id = ?', indexId)[0]?.index_base_value ?? 0;
+async function indexBaseValue(indexId: number): Promise<number> {
+  return (await all<{ index_base_value: number }>('SELECT index_base_value FROM securities WHERE id = ?', indexId))[0]?.index_base_value ?? 0;
 }
 
 const indexBaseCache = new Map<number, number>();
 
-function computeIndexValue(q: LiveQuote): number {
+async function computeIndexValue(q: LiveQuote): Promise<number> {
   const components = indexComponents.get(q.securityId);
   if (!components?.length) return q.last;
   let base = indexBaseCache.get(q.securityId);
   if (base === undefined) {
-    base = indexBaseValue(q.securityId);
+    base = await indexBaseValue(q.securityId);
     indexBaseCache.set(q.securityId, base);
   }
   let total = 0;
@@ -146,9 +146,9 @@ function computeIndexValue(q: LiveQuote): number {
 }
 
 /** Loads live quotes and prepares simulation state. Safe to call more than once. */
-export function initMarket(): void {
-  loadQuotes();
-  loadIndexComponents();
+export async function initMarket(): Promise<void> {
+  await loadQuotes();
+  await loadIndexComponents();
   indexBaseCache.clear();
   priceState.clear();
   trackingRatio.clear();
@@ -157,14 +157,14 @@ export function initMarket(): void {
     if (isPrimary(q)) resetState(q);
   }
   refreshTrackingRatios();
-  tradingDate = getState('tradingDate') ?? allQuotes()[0]?.tradingDate ?? istDate();
+  tradingDate = (await getState('tradingDate')) ?? allQuotes()[0]?.tradingDate ?? istDate();
   const bucket = Math.floor(nowMs() / BAR_MS) * BAR_MS;
-  for (const bar of all<Bar & { security_id: number }>('SELECT * FROM intraday_prices WHERE ts = ?', bucket)) {
+  for (const bar of await all<Bar & { security_id: number }>('SELECT * FROM intraday_prices WHERE ts = ?', bucket)) {
     currentBars.set(bar.security_id, { ts: bar.ts, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume });
   }
   newDayDrifts();
   // A live feed moves the trading date itself when the exchange opens a new session.
-  if (!isLiveSource() && tradingDate < istDate()) rollover(istDate());
+  if (!isLiveSource() && tradingDate < istDate()) await rollover(istDate());
 }
 
 function refreshTrackingRatios(): void {
@@ -198,11 +198,11 @@ function updateBar(q: LiveQuote, at: number, volumeDelta: number): void {
   bar.volume += volumeDelta;
 }
 
-function persistBars(quotes: LiveQuote[]): void {
+async function persistBars(quotes: LiveQuote[]): Promise<void> {
   for (const q of quotes) {
     const bar = currentBars.get(q.securityId);
     if (!bar) continue;
-    run(
+    await run(
       `INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(security_id, ts) DO UPDATE SET high = excluded.high, low = excluded.low, close = excluded.close,
          volume = excluded.volume`,
@@ -225,10 +225,10 @@ function applyPrice(q: LiveQuote, price: number, at: number): void {
 }
 
 /** Recomputes derived instruments (indices, then index-tracking ETFs) from their underlyings. */
-function updateDerived(at: number, changed: LiveQuote[]): void {
+async function updateDerived(at: number, changed: LiveQuote[]): Promise<void> {
   for (const q of allQuotes()) {
     if (!isIndex(q) || isExternal(q)) continue;
-    applyPrice(q, computeIndexValue(q), at);
+    applyPrice(q, (await computeIndexValue(q)), at);
     updateBar(q, at, 0);
     changed.push(q);
   }
@@ -254,10 +254,10 @@ function simulatedVolume(q: LiveQuote): number {
   return Math.floor(expected + Math.random());
 }
 
-function finishTick(changed: LiveQuote[]): void {
-  transaction(() => {
-    persistQuotes(changed);
-    persistBars(changed);
+async function finishTick(changed: LiveQuote[]): Promise<void> {
+  await transaction(async () => {
+    await persistQuotes(changed);
+    await persistBars(changed);
   });
   bus.emit('prices', changed.map(toTickTuple));
   for (const listener of tickListeners) {
@@ -270,12 +270,12 @@ function finishTick(changed: LiveQuote[]): void {
 }
 
 /** Advances every simulated price by one step. With a live feed, only securities it does not cover move, and only while the market is open. */
-export function tick(at: number = nowMs()): LiveQuote[] {
+export async function tick(at: number = nowMs()): Promise<LiveQuote[]> {
   if (isLiveSource()) {
     if (!isMarketOpen()) return [];
   } else {
     const today = istDate(at);
-    if (today !== tradingDate) rollover(today);
+    if (today !== tradingDate) await rollover(today);
   }
 
   const theta = 1 - Math.exp(-config.tickIntervalMs / DEVIATION_TAU_MS);
@@ -309,8 +309,8 @@ export function tick(at: number = nowMs()): LiveQuote[] {
     changed.push(q);
   }
 
-  updateDerived(at, changed);
-  finishTick(changed);
+  await updateDerived(at, changed);
+  await finishTick(changed);
   return changed;
 }
 
@@ -318,7 +318,7 @@ export function tick(at: number = nowMs()): LiveQuote[] {
  * Moves a security to an exact price (admin tooling and tests). Derived instruments, order matching
  * and alerts react exactly as they would to a simulated move.
  */
-export function setPrice(securityId: number, price: number, at: number = nowMs()): LiveQuote {
+export async function setPrice(securityId: number, price: number, at: number = nowMs()): Promise<LiveQuote> {
   const q = getQuote(securityId);
   if (!q) throw new Error(`Unknown security ${securityId}`);
   const { lower, upper } = circuitLimits(q);
@@ -331,19 +331,19 @@ export function setPrice(securityId: number, price: number, at: number = nowMs()
     state.deviation = 0;
   }
   const changed = [q];
-  updateDerived(at, changed);
-  finishTick(changed);
+  await updateDerived(at, changed);
+  await finishTick(changed);
   return q;
 }
 
 /** Closes the trading day: stores daily candles, opens the next session and notifies listeners. */
-export function rollover(newDate: string): void {
+export async function rollover(newDate: string): Promise<void> {
   const previousDate = tradingDate;
   const quotes = allQuotes();
-  transaction(() => {
+  await transaction(async () => {
     for (const q of quotes) {
       if (q.tradingDate < newDate) {
-        run(
+        await run(
           `INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(security_id, date) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low,
              close = excluded.close, volume = excluded.volume`,
@@ -369,12 +369,12 @@ export function rollover(newDate: string): void {
       q.updatedAt = nowMs();
     }
     for (const q of quotes) {
-      if (isIndex(q) && !isExternal(q)) q.open = q.high = q.low = q.last = computeIndexValue(q);
+      if (isIndex(q) && !isExternal(q)) q.open = q.high = q.low = q.last = await computeIndexValue(q);
     }
     refreshTrackingRatios();
-    persistQuotes(quotes);
-    setState('tradingDate', newDate);
-    run('DELETE FROM intraday_prices WHERE ts < ?', nowMs() - INTRADAY_RETENTION_DAYS * DAY_MS);
+    await persistQuotes(quotes);
+    await setState('tradingDate', newDate);
+    await run('DELETE FROM intraday_prices WHERE ts < ?', nowMs() - INTRADAY_RETENTION_DAYS * DAY_MS);
   });
   tradingDate = newDate;
   currentBars.clear();
@@ -405,17 +405,17 @@ export interface ExternalQuote {
  * Moves the trading date to the exchange's current session. A later session closes the previous day as a
  * normal rollover; an earlier one (a database created on a weekend or holiday) is adopted as is.
  */
-export function alignTradingDate(sessionDate: string): void {
+export async function alignTradingDate(sessionDate: string): Promise<void> {
   if (sessionDate > tradingDate) {
-    rollover(sessionDate);
+    await rollover(sessionDate);
   } else if (sessionDate < tradingDate) {
     tradingDate = sessionDate;
-    setState('tradingDate', sessionDate);
+    await setState('tradingDate', sessionDate);
   }
 }
 
 /** Applies prices from an external feed. Order matching, alerts and the live stream react as they do to simulated ticks. */
-export function applyExternalQuotes(updates: ExternalQuote[]): LiveQuote[] {
+export async function applyExternalQuotes(updates: ExternalQuote[]): Promise<LiveQuote[]> {
   const changed: LiveQuote[] = [];
   for (const update of updates) {
     const q = getQuote(update.securityId);
@@ -436,8 +436,8 @@ export function applyExternalQuotes(updates: ExternalQuote[]): LiveQuote[] {
     changed.push(q);
   }
   if (changed.length === 0) return changed;
-  updateDerived(nowMs(), changed);
-  finishTick(changed);
+  await updateDerived(nowMs(), changed);
+  await finishTick(changed);
   return changed;
 }
 
@@ -448,9 +448,9 @@ export function resetCurrentBars(): void {
 
 export function startSimulation(): void {
   if (timer) return;
-  timer = setInterval(() => {
+  timer = setInterval(async () => {
     try {
-      tick();
+      await tick();
     } catch (err) {
       console.error('Market tick failed', err);
     }

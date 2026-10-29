@@ -11,8 +11,8 @@ function istTime(date: string, hours: number): string {
 }
 
 /** Seeds the IPO pipeline relative to today; already-listed issues get a security with trading history. */
-export function seedIpos(): void {
-  if (get<{ n: number }>('SELECT COUNT(*) AS n FROM ipos')!.n > 0) return;
+export async function seedIpos(): Promise<void> {
+  if ((await get<{ n: number }>('SELECT COUNT(*) AS n FROM ipos'))!.n > 0) return;
   const today = istDate();
   for (const seed of IPOS) {
     const open = addWeekdays(today, seed.schedule.open);
@@ -21,7 +21,7 @@ export function seedIpos(): void {
     const listing = addWeekdays(today, seed.schedule.listing);
     const now = nowIso();
     const id = Number(
-      run(
+      (await run(
         `INSERT INTO ipos (company_name, symbol, issue_type, sector, industry, description, price_band_low, price_band_high, lot_size,
            min_lots, max_lots, issue_size_cr, fresh_issue_cr, ofs_cr, open_date, close_date, allotment_date, refund_date, listing_date,
            demand_profile, financials, registrar, lead_managers, created_at, updated_at)
@@ -50,11 +50,11 @@ export function seedIpos(): void {
         JSON.stringify(seed.leadManagers),
         now,
         now,
-      ).lastInsertRowid,
+      )).lastInsertRowid,
     );
-    const row = get<IpoRow>('SELECT * FROM ipos WHERE id = ?', id)!;
+    const row = (await get<IpoRow>('SELECT * FROM ipos WHERE id = ?', id))!;
     if (ipoStatus(row, today) !== 'UPCOMING' && ipoStatus(row, today) !== 'OPEN') {
-      run(
+      await run(
         'UPDATE ipos SET subscription_retail = ?, subscription_nii = ?, subscription_qib = ?, open_notified_at = ? WHERE id = ?',
         seed.demand.retail,
         seed.demand.nii,
@@ -65,7 +65,7 @@ export function seedIpos(): void {
     }
     if (seed.currentPrice && listing <= today) {
       const issuePrice = seed.priceBand[1] * 100;
-      const { securityId, listingOpen } = addSimulatedStock({
+      const { securityId, listingOpen } = await addSimulatedStock({
         symbol: seed.symbol,
         name: seed.companyName,
         sector: seed.sector,
@@ -78,7 +78,7 @@ export function seedIpos(): void {
         listingDate: listing,
         fundamentals: listingFundamentals(row, issuePrice),
       });
-      run(
+      await run(
         `UPDATE ipos SET issue_price = ?, listing_price = ?, allotted_at = ?, listed_at = ?, security_id = ? WHERE id = ?`,
         issuePrice,
         listingOpen,
@@ -89,9 +89,9 @@ export function seedIpos(): void {
       );
     }
   }
-  simulateSubscriptions();
+  await simulateSubscriptions();
 }
 
-export function seededIpoIds(): Record<string, number> {
-  return Object.fromEntries(all<{ id: number; symbol: string }>('SELECT id, symbol FROM ipos').map((r) => [r.symbol, r.id]));
+export async function seededIpoIds(): Promise<Record<string, number>> {
+  return Object.fromEntries((await all<{ id: number; symbol: string }>('SELECT id, symbol FROM ipos')).map((r) => [r.symbol, r.id]));
 }

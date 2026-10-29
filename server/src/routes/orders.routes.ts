@@ -31,9 +31,9 @@ function toOrderInput(body: z.infer<typeof orderSchema>) {
   return { ...body, limitPrice: body.limitPrice ? toPaise(body.limitPrice) : null };
 }
 
-router.post('/preview', (req, res) => {
+router.post('/preview', async (req, res) => {
   const body = parse(orderSchema, req.body);
-  res.json(previewOrder(currentUser(req).id, toOrderInput(body)));
+  res.json((await previewOrder(currentUser(req).id, toOrderInput(body))));
 });
 
 router.post('/', async (req, res) => {
@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
   res.status(201).json({ order });
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const query = parse(
     z.object({
       status: z.enum(ORDER_STATUSES as [string, ...string[]]).optional(),
@@ -54,12 +54,12 @@ router.get('/', (req, res) => {
     }),
     req.query,
   );
-  const page = listOrders({ ...query, status: query.status as never, userId: currentUser(req).id });
+  const page = await listOrders({ ...query, status: query.status as never, userId: currentUser(req).id });
   res.json({ ...page, items: page.items.map(({ userId: _u, userName: _n, ...order }) => order) });
 });
 
-router.get('/:id', (req, res) => {
-  res.json(getOrderDetail(parse(idParam(), req.params.id), currentUser(req).id));
+router.get('/:id', async (req, res) => {
+  res.json((await getOrderDetail(parse(idParam(), req.params.id), currentUser(req).id)));
 });
 
 router.patch('/:id', async (req, res) => {
@@ -84,8 +84,8 @@ router.patch('/:id', async (req, res) => {
   res.json({ order });
 });
 
-router.post('/:id/cancel', (req, res) => {
-  const order = cancelOrder(parse(idParam(), req.params.id), currentUser(req).id, actorFrom(req));
+router.post('/:id/cancel', async (req, res) => {
+  const order = await cancelOrder(parse(idParam(), req.params.id), currentUser(req).id, actorFrom(req));
   res.json({ order });
 });
 

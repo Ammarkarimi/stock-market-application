@@ -14,7 +14,7 @@ let server: Server;
 let base: string;
 
 beforeAll(async () => {
-  setupMarket();
+  await setupMarket();
   server = getApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -83,9 +83,9 @@ describe('GET /api/stream', () => {
     expect(bus.listenerCount('session-revoked')).toBe(listenersBefore + 1);
 
     // What suspending a user does: revoke their sessions and notify them in the same transaction.
-    transaction(() => {
-      revokeUserSessions(userId, 'SUSPENDED');
-      notify(userId, 'SECURITY', 'Account suspended', 'Your account has been suspended.');
+    await transaction(async () => {
+      await revokeUserSessions(userId, 'SUSPENDED');
+      await notify(userId, 'SECURITY', 'Account suspended', 'Your account has been suspended.');
     });
 
     const { text, ended } = await stream.read();

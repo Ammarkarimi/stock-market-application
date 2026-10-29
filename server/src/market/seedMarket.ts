@@ -1,4 +1,4 @@
-import { get, run, transaction } from '../db/index.js';
+import { get, insertMany, run, transaction } from '../db/index.js';
 import { nowIso, nowMs } from '../lib/clock.js';
 import { createRng, gaussian, hashString } from '../lib/rng.js';
 import { addDays, isWeekend, istDate, istDayStart } from '../lib/time.js';
@@ -247,10 +247,10 @@ function toPaiseCandle(candle: Candle, tick: number): Candle {
   };
 }
 
-function insertSecurity(values: Record<string, unknown>): number {
+async function insertSecurity(values: Record<string, unknown>): Promise<number> {
   const keys = Object.keys(values);
   const now = nowIso();
-  const result = run(
+  const result = await run(
     `INSERT INTO securities (${keys.join(', ')}, created_at, updated_at) VALUES (${keys.map(() => '?').join(', ')}, ?, ?)`,
     ...keys.map((k) => values[k]),
     now,
@@ -276,43 +276,29 @@ function stockFundamentals(stock: StockSeed) {
 }
 
 /** Writes a generated series: daily history (excluding today), intraday bars and today's live quote. */
-function persistSeries(id: number, tick: number, data: Series, dates: string[], updatedAt: string): void {
+async function persistSeries(id: number, tick: number, data: Series, dates: string[], updatedAt: string): Promise<void> {
   const last = dates.length - 1;
+  const daily: unknown[][] = [];
   for (let t = 0; t < last; t++) {
     const candle = data.daily[t];
     if (!candle) continue;
     const c = toPaiseCandle(candle, tick);
-    run(
-      'INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      id,
-      dates[t],
-      c.open,
-      c.high,
-      c.low,
-      c.close,
-      c.volume,
-    );
+    daily.push([id, dates[t], c.open, c.high, c.low, c.close, c.volume]);
   }
+  await insertMany('price_history', ['security_id', 'date', 'open', 'high', 'low', 'close', 'volume'], daily);
+  const intraday: unknown[][] = [];
   for (const bars of data.intraday.values()) {
     for (const bar of bars) {
       const c = toPaiseCandle(bar, tick);
-      run(
-        'INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        id,
-        bar.ts,
-        c.open,
-        c.high,
-        c.low,
-        c.close,
-        c.volume,
-      );
+      intraday.push([id, bar.ts, c.open, c.high, c.low, c.close, c.volume]);
     }
   }
+  await insertMany('intraday_prices', ['security_id', 'ts', 'open', 'high', 'low', 'close', 'volume'], intraday);
   const todayCandle = toPaiseCandle(data.daily[last]!, tick);
   const prev = data.daily[last - 1];
   const prevClose = prev ? toPaiseCandle(prev, tick).close : todayCandle.open;
   const avgPrice = (todayCandle.open + todayCandle.close) / 2 / 100;
-  run(
+  await run(
     `INSERT INTO quotes (security_id, last_price, prev_close, open, high, low, volume, turnover, trading_date, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
@@ -347,7 +333,7 @@ export interface SimulatedStockSpec {
  * Adds one stock with simulated history from its listing date until today (used for recently listed
  * IPOs). Returns the new security id and the opening price of its first trading day in paise.
  */
-export function addSimulatedStock(spec: SimulatedStockSpec, seed = 1234): { securityId: number; listingOpen: number } {
+export async function addSimulatedStock(spec: SimulatedStockSpec, seed = 1234): Promise<{ securityId: number; listingOpen: number }> {
   const now = nowMs();
   const today = istDate(now);
   const dates: string[] = [];
@@ -359,8 +345,8 @@ export function addSimulatedStock(spec: SimulatedStockSpec, seed = 1234): { secu
   const todayBars = Math.min(BARS_PER_DAY, Math.floor((now - istDayStart(today)) / BAR_MS) + 1);
   const data = generatePrimarySeries(spec, dates, marketReturns, intradayDates, todayBars, seed);
   const tick = tickSizeFor(spec.price);
-  return transaction(() => {
-    const securityId = insertSecurity({
+  return await transaction(async () => {
+    const securityId = await insertSecurity({
       symbol: spec.symbol,
       name: spec.name,
       security_type: 'STOCK',
@@ -375,14 +361,14 @@ export function addSimulatedStock(spec: SimulatedStockSpec, seed = 1234): { secu
       avg_volume: spec.avgVolume,
       listing_date: spec.listingDate,
     });
-    persistSeries(securityId, tick, data, dates, nowIso());
+    await persistSeries(securityId, tick, data, dates, nowIso());
     return { securityId, listingOpen: toPaiseCandle(data.daily[0]!, tick).open };
   });
 }
 
 /** Populates securities, indices, five years of daily history, recent intraday bars and live quotes. */
-export function seedMarket(options: SeedOptions = {}): void {
-  if (get<{ n: number }>('SELECT COUNT(*) AS n FROM securities')!.n > 0) return;
+export async function seedMarket(options: SeedOptions = {}): Promise<void> {
+  if ((await get<{ n: number }>('SELECT COUNT(*) AS n FROM securities'))!.n > 0) return;
   const seed = options.seed ?? 1234;
   const years = options.years ?? 5;
   const intradayDays = options.intradayDays ?? 5;
@@ -426,7 +412,7 @@ export function seedMarket(options: SeedOptions = {}): void {
     if (fund.underlying) series.set(fund.symbol, generateTrackingSeries(fund, series.get(fund.underlying)!, dates, seed));
   }
 
-  transaction(() => {
+  await transaction(async () => {
     const ids = new Map<string, number>();
     const ticks = new Map<string, number>();
 
@@ -435,7 +421,7 @@ export function seedMarket(options: SeedOptions = {}): void {
       ticks.set(stock.symbol, tick);
       ids.set(
         stock.symbol,
-        insertSecurity({
+        (await insertSecurity({
           symbol: stock.symbol,
           name: stock.name,
           security_type: 'STOCK',
@@ -451,7 +437,7 @@ export function seedMarket(options: SeedOptions = {}): void {
           volatility: stock.volatility,
           avg_volume: stock.avgVolume,
           listing_date: stock.listingDate ?? null,
-        }),
+        })),
       );
     }
     for (const fund of FUNDS) {
@@ -459,7 +445,7 @@ export function seedMarket(options: SeedOptions = {}): void {
       ticks.set(fund.symbol, tick);
       ids.set(
         fund.symbol,
-        insertSecurity({
+        (await insertSecurity({
           symbol: fund.symbol,
           name: fund.name,
           security_type: fund.type,
@@ -479,14 +465,14 @@ export function seedMarket(options: SeedOptions = {}): void {
           avg_volume: fund.avgVolume,
           underlying_symbol: fund.underlying ?? null,
           listing_date: fund.listingDate ?? null,
-        }),
+        })),
       );
     }
     for (const index of INDICES) {
       ticks.set(index.symbol, 1);
       ids.set(
         index.symbol,
-        insertSecurity({
+        (await insertSecurity({
           symbol: index.symbol,
           name: index.name,
           security_type: 'INDEX',
@@ -499,10 +485,10 @@ export function seedMarket(options: SeedOptions = {}): void {
           volatility: 0.15,
           index_base_value: Math.round(index.value * 100),
           is_tradable: 0,
-        }),
+        })),
       );
       for (const component of indexComponents.get(index.symbol)!) {
-        run(
+        await run(
           'INSERT INTO index_constituents (index_id, security_id, weight, base_price) VALUES (?, ?, ?, ?)',
           ids.get(index.symbol),
           ids.get(component.series.symbol),
@@ -514,9 +500,9 @@ export function seedMarket(options: SeedOptions = {}): void {
 
     const updatedAt = nowIso();
     for (const [symbol, data] of series) {
-      persistSeries(ids.get(symbol)!, ticks.get(symbol)!, data, dates, updatedAt);
+      await persistSeries(ids.get(symbol)!, ticks.get(symbol)!, data, dates, updatedAt);
     }
-    run(
+    await run(
       `INSERT INTO settings (key, value, updated_at) VALUES ('state:tradingDate', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       today,

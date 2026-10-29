@@ -79,18 +79,18 @@ const preferencesSchema = z.object({
   SYSTEM: z.boolean().optional(),
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const user = currentUser(req);
   res.json({
     user: toUserDto(user),
-    bankAccount: getBankAccount(user.id),
-    notificationPreferences: getNotificationPreferences(user.id),
+    bankAccount: (await getBankAccount(user.id)),
+    notificationPreferences: (await getNotificationPreferences(user.id)),
   });
 });
 
-router.patch('/', (req, res) => {
+router.patch('/', async (req, res) => {
   const body = parse(profileSchema, req.body);
-  res.json({ user: updateProfile(currentUser(req).id, body, actorFrom(req)) });
+  res.json({ user: (await updateProfile(currentUser(req).id, body, actorFrom(req))) });
 });
 
 router.post('/password', async (req, res) => {
@@ -111,22 +111,22 @@ router.post('/pin', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.put('/bank-account', (req, res) => {
+router.put('/bank-account', async (req, res) => {
   const body = parse(bankAccountSchema, req.body);
-  res.json({ bankAccount: saveBankAccount(currentUser(req).id, body, actorFrom(req)) });
+  res.json({ bankAccount: (await saveBankAccount(currentUser(req).id, body, actorFrom(req))) });
 });
 
-router.put('/notification-preferences', (req, res) => {
+router.put('/notification-preferences', async (req, res) => {
   const body = parse(preferencesSchema, req.body);
-  res.json({ notificationPreferences: updateNotificationPreferences(currentUser(req).id, body, actorFrom(req)) });
+  res.json({ notificationPreferences: (await updateNotificationPreferences(currentUser(req).id, body, actorFrom(req))) });
 });
 
-router.get('/activity', (req, res) => {
+router.get('/activity', async (req, res) => {
   const query = parse(
     z.object({ ...paginationQuery, action: z.string().max(60).optional(), entityId: idParam().optional() }),
     req.query,
   );
-  const page = listAuditLogs({
+  const page = await listAuditLogs({
     subjectUserId: currentUser(req).id,
     action: query.action,
     page: query.page,

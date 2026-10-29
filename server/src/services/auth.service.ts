@@ -23,11 +23,11 @@ export interface NewUserInput {
 /** Inserts a user with an empty cash account and a default watchlist. Returns the new user id. */
 export async function createUser(input: NewUserInput): Promise<number> {
   const email = input.email.trim().toLowerCase();
-  if (findUserByEmail(email)) throw conflict('An account with this email already exists');
+  if ((await findUserByEmail(email))) throw conflict('An account with this email already exists');
   const passwordHash = await hashSecret(input.password);
-  return transaction(() => {
+  return transaction(async () => {
     const now = nowIso();
-    const result = run(
+    const result = await run(
       `INSERT INTO users (email, password_hash, full_name, phone, role, password_changed_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       email,
@@ -40,8 +40,8 @@ export async function createUser(input: NewUserInput): Promise<number> {
       now,
     );
     const userId = Number(result.lastInsertRowid);
-    run('INSERT INTO accounts (user_id, cash_balance, updated_at) VALUES (?, 0, ?)', userId, now);
-    run('INSERT INTO watchlists (user_id, name, created_at) VALUES (?, ?, ?)', userId, 'My Watchlist', now);
+    await run('INSERT INTO accounts (user_id, cash_balance, updated_at) VALUES (?, 0, ?)', userId, now);
+    await run('INSERT INTO watchlists (user_id, name, created_at) VALUES (?, ?, ?)', userId, 'My Watchlist', now);
     return userId;
   });
 }
@@ -54,17 +54,17 @@ export interface AuthResult {
 
 export async function register(input: NewUserInput, actor: Actor): Promise<AuthResult> {
   const userId = await createUser({ ...input, role: 'USER' });
-  return transaction(() => {
-    const { token, session } = createSession(userId, actor);
-    const user = findUserById(userId)!;
-    audit({
+  return transaction(async () => {
+    const { token, session } = await createSession(userId, actor);
+    const user = (await findUserById(userId))!;
+    await audit({
       actor: { ...actor, userId, role: 'USER' },
       action: 'USER_REGISTERED',
       entityType: 'USER',
       entityId: userId,
       details: { email: user.email },
     });
-    notify(
+    await notify(
       userId,
       'SYSTEM',
       'Welcome to StockKaro',
@@ -76,9 +76,9 @@ export async function register(input: NewUserInput, actor: Actor): Promise<AuthR
 }
 
 export async function login(email: string, password: string, actor: Actor): Promise<AuthResult> {
-  const user = findUserByEmail(email);
+  const user = await findUserByEmail(email);
   if (user?.locked_until && Date.parse(user.locked_until) > nowMs()) {
-    audit({
+    await audit({
       actor: { ...actor, role: 'ANONYMOUS' },
       action: 'LOGIN_BLOCKED',
       subjectUserId: user.id,
@@ -96,14 +96,14 @@ export async function login(email: string, password: string, actor: Actor): Prom
       const attempts = user.failed_login_attempts + 1;
       const lockUntil =
         attempts >= MAX_LOGIN_ATTEMPTS ? new Date(nowMs() + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
-      run(
+      await run(
         'UPDATE users SET failed_login_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?',
         lockUntil ? 0 : attempts,
         lockUntil,
         nowIso(),
         user.id,
       );
-      audit({
+      await audit({
         actor: { ...actor, role: 'ANONYMOUS' },
         action: lockUntil ? 'ACCOUNT_LOCKED' : 'LOGIN_FAILED',
         subjectUserId: user.id,
@@ -112,7 +112,7 @@ export async function login(email: string, password: string, actor: Actor): Prom
         details: { attempts },
       });
       if (lockUntil) {
-        notify(
+        await notify(
           user.id,
           'SECURITY',
           'Account temporarily locked',
@@ -120,7 +120,7 @@ export async function login(email: string, password: string, actor: Actor): Prom
         );
       }
     } else {
-      audit({
+      await audit({
         actor: { ...actor, role: 'ANONYMOUS' },
         action: 'LOGIN_FAILED',
         subjectUserId: null,
@@ -131,7 +131,7 @@ export async function login(email: string, password: string, actor: Actor): Prom
   }
 
   if (user.status !== 'ACTIVE') {
-    audit({
+    await audit({
       actor: { ...actor, userId: user.id, role: user.role },
       action: 'LOGIN_BLOCKED',
       entityType: 'USER',
@@ -141,36 +141,36 @@ export async function login(email: string, password: string, actor: Actor): Prom
     throw forbidden('Your account has been suspended. Please contact support.');
   }
 
-  return transaction(() => {
+  return transaction(async () => {
     const now = nowIso();
-    run(
+    await run(
       'UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = ?, updated_at = ? WHERE id = ?',
       now,
       now,
       user.id,
     );
-    const { token, session } = createSession(user.id, actor);
+    const { token, session } = await createSession(user.id, actor);
     const device = describeUserAgent(actor.userAgent);
-    audit({
+    await audit({
       actor: { ...actor, userId: user.id, role: user.role },
       action: 'LOGIN_SUCCESS',
       entityType: 'SESSION',
       entityId: session.id.slice(0, 12),
       details: { device },
     });
-    notify(
+    await notify(
       user.id,
       'SECURITY',
       'New login to your account',
       `Signed in from ${device}${actor.ip ? ` (IP ${actor.ip})` : ''}. If this wasn't you, change your password and sign out other sessions.`,
       '/profile?tab=security',
     );
-    return { user: findUserById(user.id)!, token, session };
+    return { user: (await findUserById(user.id))!, token, session };
   });
 }
 
-export function logout(session: SessionRow | undefined, actor: Actor): void {
+export async function logout(session: SessionRow | undefined, actor: Actor): Promise<void> {
   if (!session) throw unauthorized();
-  revokeSession(session.id, 'LOGOUT');
-  audit({ actor, action: 'LOGOUT', entityType: 'SESSION', entityId: session.id.slice(0, 12) });
+  await revokeSession(session.id, 'LOGOUT');
+  await audit({ actor, action: 'LOGOUT', entityType: 'SESSION', entityId: session.id.slice(0, 12) });
 }

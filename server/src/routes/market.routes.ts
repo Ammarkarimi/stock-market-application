@@ -16,12 +16,12 @@ router.get('/status', (_req, res) => {
   res.json(getMarketStatus());
 });
 
-router.get('/overview', (_req, res) => {
-  res.json(getMarketOverview());
+router.get('/overview', async (_req, res) => {
+  res.json((await getMarketOverview()));
 });
 
-router.get('/indices', (_req, res) => {
-  res.json({ indices: getIndices() });
+router.get('/indices', async (_req, res) => {
+  res.json({ indices: (await getIndices()) });
 });
 
 router.get('/movers', (req, res) => {

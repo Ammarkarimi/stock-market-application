@@ -57,35 +57,35 @@ export function toLedgerDto(row: LedgerRow): LedgerEntryDto {
   };
 }
 
-export function getCashBalance(userId: number): number {
-  const row = get<{ cash_balance: number }>('SELECT cash_balance FROM accounts WHERE user_id = ?', userId);
+export async function getCashBalance(userId: number): Promise<number> {
+  const row = await get<{ cash_balance: number }>('SELECT cash_balance FROM accounts WHERE user_id = ?', userId);
   if (!row) throw notFound('Account not found');
   return row.cash_balance;
 }
 
-export function blockedForOrders(userId: number, excludeOrderId?: number): number {
+export async function blockedForOrders(userId: number, excludeOrderId?: number): Promise<number> {
   return (
-    get<{ total: number | null }>(
+    (await get<{ total: number | null }>(
       `SELECT SUM(blocked_amount) AS total FROM orders
         WHERE user_id = ? AND status = 'OPEN' AND side = 'BUY' AND id != ?`,
       userId,
       excludeOrderId ?? 0,
-    )?.total ?? 0
+    ))?.total ?? 0
   );
 }
 
-export function blockedForIpos(userId: number): number {
+export async function blockedForIpos(userId: number): Promise<number> {
   return (
-    get<{ total: number | null }>(
+    (await get<{ total: number | null }>(
       "SELECT SUM(blocked_amount) AS total FROM ipo_applications WHERE user_id = ? AND status = 'APPLIED'",
       userId,
-    )?.total ?? 0
+    ))?.total ?? 0
   );
 }
 
 /** Cash that is not reserved for open buy orders or pending IPO bids (paise). */
-export function availableBalance(userId: number, excludeOrderId?: number): number {
-  return getCashBalance(userId) - blockedForOrders(userId, excludeOrderId) - blockedForIpos(userId);
+export async function availableBalance(userId: number, excludeOrderId?: number): Promise<number> {
+  return (await getCashBalance(userId)) - (await blockedForOrders(userId, excludeOrderId)) - (await blockedForIpos(userId));
 }
 
 export interface FundsSummary {
@@ -99,11 +99,11 @@ export interface FundsSummary {
   limits: ReturnType<typeof getSetting<'funds'>>;
 }
 
-export function getFundsSummary(userId: number): FundsSummary {
-  const cash = getCashBalance(userId);
-  const orders = blockedForOrders(userId);
-  const ipos = blockedForIpos(userId);
-  const totals = get<{ deposits: number | null; withdrawals: number | null }>(
+export async function getFundsSummary(userId: number): Promise<FundsSummary> {
+  const cash = await getCashBalance(userId);
+  const orders = await blockedForOrders(userId);
+  const ipos = await blockedForIpos(userId);
+  const totals = await get<{ deposits: number | null; withdrawals: number | null }>(
     `SELECT SUM(CASE WHEN txn_type = 'DEPOSIT' THEN amount END) AS deposits,
             SUM(CASE WHEN txn_type = 'WITHDRAWAL' THEN amount END) AS withdrawals
        FROM fund_transactions WHERE user_id = ? AND status = 'COMPLETED'`,
@@ -132,15 +132,15 @@ export interface LedgerPosting {
 }
 
 /** Applies a signed amount to the cash balance and records it in the ledger. Must run in a transaction. */
-export function postLedger(userId: number, posting: LedgerPosting): LedgerEntryDto {
+export async function postLedger(userId: number, posting: LedgerPosting): Promise<LedgerEntryDto> {
   if (posting.amount === 0) {
     throw new Error('Ledger postings must have a non-zero amount');
   }
-  const balance = getCashBalance(userId) + posting.amount;
+  const balance = (await getCashBalance(userId)) + posting.amount;
   if (balance < 0) throw unprocessable('INSUFFICIENT_FUNDS', 'Insufficient funds');
   const now = nowIso();
-  run('UPDATE accounts SET cash_balance = ?, updated_at = ? WHERE user_id = ?', balance, now, userId);
-  const result = run(
+  await run('UPDATE accounts SET cash_balance = ?, updated_at = ? WHERE user_id = ?', balance, now, userId);
+  const result = await run(
     `INSERT INTO ledger_entries (user_id, entry_type, amount, balance_after, reference_type, reference_id, description, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     userId,
@@ -209,13 +209,13 @@ function checkLimits(amount: number, min: number, max: number, label: string): v
   if (amount > toPaise(max)) throw badRequest(`Maximum ${label} amount per transaction is ${formatInr(toPaise(max))}`);
 }
 
-export function deposit(userId: number, amount: number, method: DepositMethod, actor: Actor): FundTransactionDto {
-  const limits = getSetting('funds');
+export async function deposit(userId: number, amount: number, method: DepositMethod, actor: Actor): Promise<FundTransactionDto> {
+  const limits = await getSetting('funds');
   checkLimits(amount, limits.minDeposit, limits.maxDeposit, 'deposit');
-  return transaction(() => {
+  return await transaction(async () => {
     const now = nowIso();
     const reference = referenceCode('DEP', istDate());
-    const result = run(
+    const result = await run(
       `INSERT INTO fund_transactions (user_id, txn_type, amount, method, status, reference, created_at)
        VALUES (?, 'DEPOSIT', ?, ?, 'COMPLETED', ?, ?)`,
       userId,
@@ -225,34 +225,34 @@ export function deposit(userId: number, amount: number, method: DepositMethod, a
       now,
     );
     const id = Number(result.lastInsertRowid);
-    postLedger(userId, {
+    await postLedger(userId, {
       type: 'DEPOSIT',
       amount,
       referenceType: 'FUND_TRANSACTION',
       referenceId: id,
       description: `Funds added via ${METHOD_LABELS[method]} (${reference})`,
     });
-    notify(userId, 'FUNDS', 'Funds added', `${formatInr(amount)} was added to your account via ${METHOD_LABELS[method]}.`, '/funds');
-    audit({ actor, action: 'FUNDS_DEPOSITED', subjectUserId: userId, entityType: 'FUND_TRANSACTION', entityId: id, details: { amount: toRupees(amount), method, reference } });
-    return toFundTransactionDto(get<FundTransactionRow>('SELECT * FROM fund_transactions WHERE id = ?', id)!);
+    await notify(userId, 'FUNDS', 'Funds added', `${formatInr(amount)} was added to your account via ${METHOD_LABELS[method]}.`, '/funds');
+    await audit({ actor, action: 'FUNDS_DEPOSITED', subjectUserId: userId, entityType: 'FUND_TRANSACTION', entityId: id, details: { amount: toRupees(amount), method, reference } });
+    return toFundTransactionDto((await get<FundTransactionRow>('SELECT * FROM fund_transactions WHERE id = ?', id))!);
   });
 }
 
 export async function withdraw(userId: number, amount: number, pin: string | undefined, actor: Actor): Promise<FundTransactionDto> {
-  const bank = getBankAccount(userId);
+  const bank = await getBankAccount(userId);
   if (!bank) throw unprocessable('BANK_ACCOUNT_REQUIRED', 'Add a bank account in your profile before withdrawing');
-  const limits = getSetting('funds');
+  const limits = await getSetting('funds');
   checkLimits(amount, limits.minWithdrawal, limits.maxWithdrawal, 'withdrawal');
   await verifyTransactionPin(userId, pin, actor, 'WITHDRAWAL');
-  return transaction(() => {
-    const available = availableBalance(userId);
+  return transaction(async () => {
+    const available = await availableBalance(userId);
     if (amount > available) {
       throw new AppError(422, 'INSUFFICIENT_FUNDS', `You can withdraw at most ${formatInr(Math.max(0, available))}`);
     }
     const now = nowIso();
     const reference = referenceCode('WDL', istDate());
     const destination = `${bank.bankName} ${bank.accountNumberMasked}`;
-    const result = run(
+    const result = await run(
       `INSERT INTO fund_transactions (user_id, txn_type, amount, method, status, reference, bank_account, created_at)
        VALUES (?, 'WITHDRAWAL', ?, 'BANK_TRANSFER', 'COMPLETED', ?, ?, ?)`,
       userId,
@@ -262,55 +262,55 @@ export async function withdraw(userId: number, amount: number, pin: string | und
       now,
     );
     const id = Number(result.lastInsertRowid);
-    postLedger(userId, {
+    await postLedger(userId, {
       type: 'WITHDRAWAL',
       amount: -amount,
       referenceType: 'FUND_TRANSACTION',
       referenceId: id,
       description: `Withdrawal to ${destination} (${reference})`,
     });
-    notify(userId, 'FUNDS', 'Withdrawal processed', `${formatInr(amount)} was sent to ${destination}.`, '/funds');
-    audit({ actor, action: 'FUNDS_WITHDRAWN', subjectUserId: userId, entityType: 'FUND_TRANSACTION', entityId: id, details: { amount: toRupees(amount), destination, reference } });
-    return toFundTransactionDto(get<FundTransactionRow>('SELECT * FROM fund_transactions WHERE id = ?', id)!);
+    await notify(userId, 'FUNDS', 'Withdrawal processed', `${formatInr(amount)} was sent to ${destination}.`, '/funds');
+    await audit({ actor, action: 'FUNDS_WITHDRAWN', subjectUserId: userId, entityType: 'FUND_TRANSACTION', entityId: id, details: { amount: toRupees(amount), destination, reference } });
+    return toFundTransactionDto((await get<FundTransactionRow>('SELECT * FROM fund_transactions WHERE id = ?', id))!);
   });
 }
 
 /** Admin credit or debit with a mandatory reason. */
-export function adjustFunds(userId: number, amount: number, reason: string, actor: Actor): LedgerEntryDto {
+export async function adjustFunds(userId: number, amount: number, reason: string, actor: Actor): Promise<LedgerEntryDto> {
   if (amount === 0) throw badRequest('Amount must not be zero');
-  return transaction(() => {
-    if (amount < 0 && -amount > availableBalance(userId)) {
+  return await transaction(async () => {
+    if (amount < 0 && -amount > (await availableBalance(userId))) {
       throw unprocessable('INSUFFICIENT_FUNDS', 'Debit exceeds the user’s available balance');
     }
-    const entry = postLedger(userId, {
+    const entry = await postLedger(userId, {
       type: 'ADJUSTMENT',
       amount,
       referenceType: 'ADMIN',
       referenceId: actor.userId ?? undefined,
       description: `${amount > 0 ? 'Credit' : 'Debit'} adjustment: ${reason}`,
     });
-    notify(
+    await notify(
       userId,
       'FUNDS',
       amount > 0 ? 'Account credited' : 'Account debited',
       `${formatInr(Math.abs(amount))} was ${amount > 0 ? 'credited to' : 'debited from'} your account. Reason: ${reason}`,
       '/statements',
     );
-    audit({ actor, action: 'FUNDS_ADJUSTED', subjectUserId: userId, entityType: 'LEDGER_ENTRY', entityId: entry.id, details: { amount: toRupees(amount), reason } });
+    await audit({ actor, action: 'FUNDS_ADJUSTED', subjectUserId: userId, entityType: 'LEDGER_ENTRY', entityId: entry.id, details: { amount: toRupees(amount), reason } });
     return entry;
   });
 }
 
-export function listFundTransactions(
+export async function listFundTransactions(
   userId: number,
   query: { type?: 'DEPOSIT' | 'WITHDRAWAL'; page: number; pageSize: number },
-): Page<FundTransactionDto> {
+): Promise<Page<FundTransactionDto>> {
   const where = ['user_id = ?'];
   const params: unknown[] = [userId];
   if (query.type) (where.push('txn_type = ?'), params.push(query.type));
   const clause = where.join(' AND ');
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM fund_transactions WHERE ${clause}`, ...params)!.n;
-  const rows = all<FundTransactionRow>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM fund_transactions WHERE ${clause}`, ...params))!.n;
+  const rows = await all<FundTransactionRow>(
     `SELECT * FROM fund_transactions WHERE ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`,
     ...params,
     query.pageSize,
@@ -338,10 +338,10 @@ function ledgerWhere(query: LedgerQuery): { clause: string; params: unknown[] } 
   return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
-export function listLedger(query: LedgerQuery): Page<LedgerEntryDto & { userId: number; userName: string; userEmail: string }> {
+export async function listLedger(query: LedgerQuery): Promise<Page<LedgerEntryDto & { userId: number; userName: string; userEmail: string }>> {
   const { clause, params } = ledgerWhere(query);
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM ledger_entries l ${clause}`, ...params)!.n;
-  const rows = all<LedgerRow & { full_name: string; email: string }>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM ledger_entries l ${clause}`, ...params))!.n;
+  const rows = await all<LedgerRow & { full_name: string; email: string }>(
     `SELECT l.*, u.full_name, u.email FROM ledger_entries l JOIN users u ON u.id = l.user_id ${clause}
       ORDER BY l.id DESC LIMIT ? OFFSET ?`,
     ...params,
@@ -357,14 +357,14 @@ export function listLedger(query: LedgerQuery): Page<LedgerEntryDto & { userId: 
 }
 
 /** Account statement for a period: opening/closing balance, totals and every entry in order. */
-export function getStatement(userId: number, from: string, to: string, type?: LedgerEntryType) {
+export async function getStatement(userId: number, from: string, to: string, type?: LedgerEntryType) {
   const opening =
-    get<{ balance_after: number }>(
+    (await get<{ balance_after: number }>(
       'SELECT balance_after FROM ledger_entries WHERE user_id = ? AND created_at < ? ORDER BY id DESC LIMIT 1',
       userId,
       istDayStartIso(from),
-    )?.balance_after ?? 0;
-  const rows = all<LedgerRow>(
+    ))?.balance_after ?? 0;
+  const rows = await all<LedgerRow>(
     `SELECT * FROM ledger_entries WHERE user_id = ? AND created_at >= ? AND created_at <= ? ORDER BY id`,
     userId,
     istDayStartIso(from),

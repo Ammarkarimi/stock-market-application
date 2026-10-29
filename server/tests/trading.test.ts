@@ -28,7 +28,7 @@ describe('funds', () => {
     expect(res.status).toBe(201);
     expect(res.body.transaction.reference).toMatch(/^DEP-\d{8}-[A-Z0-9]{6}$/);
     expect(res.body.funds).toMatchObject({ cashBalance: 25_000.5, availableBalance: 25_000.5 });
-    const ledger = all<{ entry_type: string; amount: number }>('SELECT entry_type, amount FROM ledger_entries WHERE user_id = ?', user.id);
+    const ledger = await all<{ entry_type: string; amount: number }>('SELECT entry_type, amount FROM ledger_entries WHERE user_id = ?', user.id);
     expect(ledger).toEqual([{ entry_type: 'DEPOSIT', amount: 2_500_050 }]);
     expect((await client.get('/api/notifications/unread-count')).status).toBeLessThan(500);
   });
@@ -99,11 +99,11 @@ describe('orders', () => {
     expect(portfolio.body.holdings).toHaveLength(1);
     expect(portfolio.body.holdings[0]).toMatchObject({ symbol: 'TCS', quantity: 10, averagePrice: ltp });
 
-    const trade = get<{ net_amount: number; total_charges: number; value: number }>('SELECT * FROM trades WHERE user_id = ?', user.id)!;
+    const trade = (await get<{ net_amount: number; total_charges: number; value: number }>('SELECT * FROM trades WHERE user_id = ?', user.id))!;
     expect(trade.net_amount).toBe(trade.value + trade.total_charges);
     const funds = await client.get('/api/funds');
     expect(funds.body.cashBalance).toBeCloseTo(500_000 - trade.net_amount / 100, 2);
-    const types = all<{ entry_type: string }>('SELECT entry_type FROM ledger_entries WHERE user_id = ? ORDER BY id', user.id).map((r) => r.entry_type);
+    const types = (await all<{ entry_type: string }>('SELECT entry_type FROM ledger_entries WHERE user_id = ? ORDER BY id', user.id)).map((r) => r.entry_type);
     expect(types).toEqual(['DEPOSIT', 'BUY', 'CHARGES']);
   });
 
@@ -124,7 +124,7 @@ describe('orders', () => {
     await order(client, { symbol: 'INFY', side: 'BUY', orderType: 'MARKET', quantity: 20 });
     const infy = getQuoteBySymbol('INFY')!;
     const buyPrice = infy.last;
-    setPrice(infy.securityId, Math.round(buyPrice * 1.04));
+    await setPrice(infy.securityId, Math.round(buyPrice * 1.04));
     const sell = await order(client, { symbol: 'INFY', side: 'SELL', orderType: 'MARKET', quantity: 5 });
     expect(sell.body.order.status).toBe('EXECUTED');
     const trades = await client.get('/api/trades?side=SELL');
@@ -144,7 +144,7 @@ describe('orders', () => {
     expect(funds.body.blockedForOrders).toBeGreaterThan((50 * limit) / 100);
     expect(funds.body.availableBalance).toBeCloseTo(100_000 - funds.body.blockedForOrders, 2);
 
-    setPrice(sbin.securityId, limit - 10);
+    await setPrice(sbin.securityId, limit - 10);
     const after = await client.get(`/api/orders/${res.body.order.id}`);
     expect(after.body.order.status).toBe('EXECUTED');
     expect(after.body.order.averagePrice).toBe(limit / 100);
@@ -212,7 +212,7 @@ describe('orders', () => {
     const { client } = await fundedClient(100_000);
     const cipla = getQuoteBySymbol('CIPLA')!;
     const placed = await order(client, { symbol: 'CIPLA', side: 'BUY', orderType: 'LIMIT', quantity: 5, limitPrice: Math.round(cipla.last * 0.9 / 5) * 5 / 100 });
-    rollover(addDays(currentTradingDate(), 1));
+    await rollover(addDays(currentTradingDate(), 1));
     const after = await client.get(`/api/orders/${placed.body.order.id}`);
     expect(after.body.order.status).toBe('EXPIRED');
     expect((await client.get('/api/funds')).body.blockedForOrders).toBe(0);

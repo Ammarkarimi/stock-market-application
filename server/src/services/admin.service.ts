@@ -19,22 +19,22 @@ import { getBankAccount } from './profile.service.js';
 import { countActiveSessions, listActiveSessions, revokeUserSessions } from './session.service.js';
 import { findUserById, toUserDto, type UserDto } from './user.repository.js';
 
-const sum = (sql: string, ...params: unknown[]) => get<{ v: number | null }>(sql, ...params)?.v ?? 0;
-const count = (sql: string, ...params: unknown[]) => get<{ n: number }>(sql, ...params)?.n ?? 0;
+const sum = async (sql: string, ...params: unknown[]) => (await get<{ v: number | null }>(sql, ...params))?.v ?? 0;
+const count = async (sql: string, ...params: unknown[]) => (await get<{ n: number }>(sql, ...params))?.n ?? 0;
 
 /** Total market value of every user's holdings at live prices (paise). */
-function totalHoldingsValue(): number {
-  return all<{ security_id: number; qty: number }>('SELECT security_id, SUM(quantity) AS qty FROM holdings GROUP BY security_id').reduce(
+async function totalHoldingsValue(): Promise<number> {
+  return (await all<{ security_id: number; qty: number }>('SELECT security_id, SUM(quantity) AS qty FROM holdings GROUP BY security_id')).reduce(
     (total, row) => total + row.qty * (getQuote(row.security_id)?.last ?? 0),
     0,
   );
 }
 
-export function getAdminOverview() {
+export async function getAdminOverview() {
   const today = istDate();
   const todayStart = istDayStartIso(today);
   const weekStart = istDayStartIso(addDays(today, -6));
-  const ipos = all<IpoRow>('SELECT * FROM ipos');
+  const ipos = await all<IpoRow>('SELECT * FROM ipos');
 
   const daily = [];
   for (let i = 13; i >= 0; i--) {
@@ -43,51 +43,51 @@ export function getAdminOverview() {
     const end = istDayStartIso(addDays(date, 1));
     daily.push({
       date,
-      trades: count('SELECT COUNT(*) AS n FROM trades WHERE executed_at >= ? AND executed_at < ?', start, end),
-      turnover: toRupees(sum('SELECT SUM(value) AS v FROM trades WHERE executed_at >= ? AND executed_at < ?', start, end)),
-      newUsers: count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ? AND created_at < ?', start, end),
+      trades: (await count('SELECT COUNT(*) AS n FROM trades WHERE executed_at >= ? AND executed_at < ?', start, end)),
+      turnover: toRupees((await sum('SELECT SUM(value) AS v FROM trades WHERE executed_at >= ? AND executed_at < ?', start, end))),
+      newUsers: (await count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ? AND created_at < ?', start, end)),
     });
   }
 
   return {
     users: {
-      total: count('SELECT COUNT(*) AS n FROM users'),
-      active: count("SELECT COUNT(*) AS n FROM users WHERE status = 'ACTIVE'"),
-      suspended: count("SELECT COUNT(*) AS n FROM users WHERE status = 'SUSPENDED'"),
-      admins: count("SELECT COUNT(*) AS n FROM users WHERE role = 'ADMIN'"),
-      newToday: count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?', todayStart),
-      newThisWeek: count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?', weekStart),
+      total: (await count('SELECT COUNT(*) AS n FROM users')),
+      active: (await count("SELECT COUNT(*) AS n FROM users WHERE status = 'ACTIVE'")),
+      suspended: (await count("SELECT COUNT(*) AS n FROM users WHERE status = 'SUSPENDED'")),
+      admins: (await count("SELECT COUNT(*) AS n FROM users WHERE role = 'ADMIN'")),
+      newToday: (await count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?', todayStart)),
+      newThisWeek: (await count('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?', weekStart)),
     },
-    sessions: { active: countActiveSessions() },
+    sessions: { active: (await countActiveSessions()) },
     orders: {
-      today: count('SELECT COUNT(*) AS n FROM orders WHERE created_at >= ?', todayStart),
-      executedToday: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'EXECUTED' AND executed_at >= ?", todayStart),
-      rejectedToday: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'REJECTED' AND created_at >= ?", todayStart),
-      open: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'OPEN'"),
+      today: (await count('SELECT COUNT(*) AS n FROM orders WHERE created_at >= ?', todayStart)),
+      executedToday: (await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'EXECUTED' AND executed_at >= ?", todayStart)),
+      rejectedToday: (await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'REJECTED' AND created_at >= ?", todayStart)),
+      open: (await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'OPEN'")),
     },
     trading: {
-      tradesToday: count('SELECT COUNT(*) AS n FROM trades WHERE executed_at >= ?', todayStart),
-      turnoverToday: toRupees(sum('SELECT SUM(value) AS v FROM trades WHERE executed_at >= ?', todayStart)),
-      chargesToday: toRupees(sum('SELECT SUM(total_charges) AS v FROM trades WHERE executed_at >= ?', todayStart)),
-      chargesTotal: toRupees(sum('SELECT SUM(total_charges) AS v FROM trades')),
+      tradesToday: (await count('SELECT COUNT(*) AS n FROM trades WHERE executed_at >= ?', todayStart)),
+      turnoverToday: toRupees((await sum('SELECT SUM(value) AS v FROM trades WHERE executed_at >= ?', todayStart))),
+      chargesToday: toRupees((await sum('SELECT SUM(total_charges) AS v FROM trades WHERE executed_at >= ?', todayStart))),
+      chargesTotal: toRupees((await sum('SELECT SUM(total_charges) AS v FROM trades'))),
     },
     funds: {
-      totalCash: toRupees(sum('SELECT SUM(cash_balance) AS v FROM accounts')),
-      holdingsValue: toRupees(totalHoldingsValue()),
-      depositsToday: toRupees(sum("SELECT SUM(amount) AS v FROM fund_transactions WHERE txn_type = 'DEPOSIT' AND created_at >= ?", todayStart)),
-      withdrawalsToday: toRupees(sum("SELECT SUM(amount) AS v FROM fund_transactions WHERE txn_type = 'WITHDRAWAL' AND created_at >= ?", todayStart)),
-      blockedForOrders: toRupees(sum("SELECT SUM(blocked_amount) AS v FROM orders WHERE status = 'OPEN'")),
-      blockedForIpos: toRupees(sum("SELECT SUM(blocked_amount) AS v FROM ipo_applications WHERE status = 'APPLIED'")),
+      totalCash: toRupees((await sum('SELECT SUM(cash_balance) AS v FROM accounts'))),
+      holdingsValue: toRupees((await totalHoldingsValue())),
+      depositsToday: toRupees((await sum("SELECT SUM(amount) AS v FROM fund_transactions WHERE txn_type = 'DEPOSIT' AND created_at >= ?", todayStart))),
+      withdrawalsToday: toRupees((await sum("SELECT SUM(amount) AS v FROM fund_transactions WHERE txn_type = 'WITHDRAWAL' AND created_at >= ?", todayStart))),
+      blockedForOrders: toRupees((await sum("SELECT SUM(blocked_amount) AS v FROM orders WHERE status = 'OPEN'"))),
+      blockedForIpos: toRupees((await sum("SELECT SUM(blocked_amount) AS v FROM ipo_applications WHERE status = 'APPLIED'"))),
     },
     ipos: {
       upcoming: ipos.filter((ipo) => ipoStatus(ipo) === 'UPCOMING').length,
       open: ipos.filter((ipo) => ipoStatus(ipo) === 'OPEN').length,
       awaitingAllotment: ipos.filter((ipo) => ipoStatus(ipo) === 'CLOSED').length,
-      pendingApplications: count("SELECT COUNT(*) AS n FROM ipo_applications WHERE status = 'APPLIED'"),
+      pendingApplications: (await count("SELECT COUNT(*) AS n FROM ipo_applications WHERE status = 'APPLIED'")),
     },
     market: { status: getMarketStatus(), breadth: getMarketBreadth() },
     daily,
-    recentActivity: listAuditLogs({ page: 1, pageSize: 12 }).items,
+    recentActivity: (await listAuditLogs({ page: 1, pageSize: 12 })).items,
   };
 }
 
@@ -98,7 +98,7 @@ export interface AdminUserListItem extends UserDto {
   locked: boolean;
 }
 
-export function listUsers(query: { q?: string; status?: 'ACTIVE' | 'SUSPENDED'; role?: 'USER' | 'ADMIN'; page: number; pageSize: number }): Page<AdminUserListItem> {
+export async function listUsers(query: { q?: string; status?: 'ACTIVE' | 'SUSPENDED'; role?: 'USER' | 'ADMIN'; page: number; pageSize: number }): Promise<Page<AdminUserListItem>> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.q) {
@@ -109,8 +109,8 @@ export function listUsers(query: { q?: string; status?: 'ACTIVE' | 'SUSPENDED'; 
   if (query.status) (where.push('u.status = ?'), params.push(query.status));
   if (query.role) (where.push('u.role = ?'), params.push(query.role));
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const total = count(`SELECT COUNT(*) AS n FROM users u ${clause}`, ...params);
-  const rows = all<Parameters<typeof toUserDto>[0] & { cash_balance: number; holdings_count: number; orders_count: number }>(
+  const total = await count(`SELECT COUNT(*) AS n FROM users u ${clause}`, ...params);
+  const rows = await all<Parameters<typeof toUserDto>[0] & { cash_balance: number; holdings_count: number; orders_count: number }>(
     `SELECT u.*, a.cash_balance,
             (SELECT COUNT(*) FROM holdings h WHERE h.user_id = u.id AND h.quantity > 0) AS holdings_count,
             (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS orders_count
@@ -135,15 +135,15 @@ export function listUsers(query: { q?: string; status?: 'ACTIVE' | 'SUSPENDED'; 
   );
 }
 
-function requireUser(userId: number) {
-  const user = findUserById(userId);
+async function requireUser(userId: number) {
+  const user = await findUserById(userId);
   if (!user) throw notFound('User not found');
   return user;
 }
 
-export function getUserDetail(userId: number) {
-  const user = requireUser(userId);
-  const portfolio = getPortfolio(userId);
+export async function getUserDetail(userId: number) {
+  const user = await requireUser(userId);
+  const portfolio = await getPortfolio(userId);
   return {
     user: toUserDto(user),
     security: {
@@ -152,38 +152,38 @@ export function getUserDetail(userId: number) {
       pinLockedUntil: user.pin_locked_until,
       passwordChangedAt: user.password_changed_at,
     },
-    bankAccount: getBankAccount(userId),
-    funds: getFundsSummary(userId),
+    bankAccount: (await getBankAccount(userId)),
+    funds: (await getFundsSummary(userId)),
     portfolio: { summary: portfolio.summary, holdings: portfolio.holdings },
-    orders: listOrders({ userId, page: 1, pageSize: 10 }).items,
-    ipoApplications: listMyApplications(userId),
-    sessions: listActiveSessions(userId),
-    activity: listAuditLogs({ subjectUserId: userId, page: 1, pageSize: 20 }).items,
+    orders: (await listOrders({ userId, page: 1, pageSize: 10 })).items,
+    ipoApplications: (await listMyApplications(userId)),
+    sessions: (await listActiveSessions(userId)),
+    activity: (await listAuditLogs({ subjectUserId: userId, page: 1, pageSize: 20 })).items,
   };
 }
 
 export function setUserStatus(userId: number, status: 'ACTIVE' | 'SUSPENDED', reason: string, actor: Actor) {
   if (userId === actor.userId) throw badRequest('You cannot change the status of your own account');
-  return transaction(() => {
-    const user = requireUser(userId);
+  return transaction(async () => {
+    const user = await requireUser(userId);
     if (user.status === status) throw conflict(`User is already ${status.toLowerCase()}`);
-    run('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', status, nowIso(), userId);
+    await run('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', status, nowIso(), userId);
     let cancelledOrders = 0;
     let revokedSessions = 0;
     if (status === 'SUSPENDED') {
-      revokedSessions = revokeUserSessions(userId, 'USER_SUSPENDED');
-      for (const order of all<{ id: number }>("SELECT id FROM orders WHERE user_id = ? AND status = 'OPEN'", userId)) {
-        cancelOrder(order.id, null, actor, 'Cancelled because the account was suspended');
+      revokedSessions = await revokeUserSessions(userId, 'USER_SUSPENDED');
+      for (const order of await all<{ id: number }>("SELECT id FROM orders WHERE user_id = ? AND status = 'OPEN'", userId)) {
+        await cancelOrder(order.id, null, actor, 'Cancelled because the account was suspended');
         cancelledOrders++;
       }
     }
-    notify(
+    await notify(
       userId,
       'SECURITY',
       status === 'SUSPENDED' ? 'Account suspended' : 'Account reactivated',
       status === 'SUSPENDED' ? `Your account was suspended. Reason: ${reason}` : 'Your account has been reactivated. You can sign in again.',
     );
-    audit({
+    await audit({
       actor,
       action: status === 'SUSPENDED' ? 'USER_SUSPENDED' : 'USER_REACTIVATED',
       subjectUserId: userId,
@@ -191,40 +191,40 @@ export function setUserStatus(userId: number, status: 'ACTIVE' | 'SUSPENDED', re
       entityId: userId,
       details: { reason, revokedSessions, cancelledOrders },
     });
-    return toUserDto(requireUser(userId));
+    return toUserDto((await requireUser(userId)));
   });
 }
 
 export function setUserRole(userId: number, role: 'USER' | 'ADMIN', actor: Actor) {
   if (userId === actor.userId) throw badRequest('You cannot change your own role');
-  return transaction(() => {
-    const user = requireUser(userId);
+  return transaction(async () => {
+    const user = await requireUser(userId);
     if (user.role === role) throw conflict(`User already has the ${role.toLowerCase()} role`);
-    run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', role, nowIso(), userId);
-    revokeUserSessions(userId, 'ROLE_CHANGED');
-    audit({ actor, action: 'USER_ROLE_CHANGED', subjectUserId: userId, entityType: 'USER', entityId: userId, details: { from: user.role, to: role } });
-    return toUserDto(requireUser(userId));
+    await run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', role, nowIso(), userId);
+    await revokeUserSessions(userId, 'ROLE_CHANGED');
+    await audit({ actor, action: 'USER_ROLE_CHANGED', subjectUserId: userId, entityType: 'USER', entityId: userId, details: { from: user.role, to: role } });
+    return toUserDto((await requireUser(userId)));
   });
 }
 
 export function unlockUser(userId: number, actor: Actor) {
-  return transaction(() => {
-    requireUser(userId);
-    run(
+  return transaction(async () => {
+    await requireUser(userId);
+    await run(
       `UPDATE users SET failed_login_attempts = 0, locked_until = NULL, pin_failed_attempts = 0, pin_locked_until = NULL,
          updated_at = ? WHERE id = ?`,
       nowIso(),
       userId,
     );
-    audit({ actor, action: 'USER_UNLOCKED', subjectUserId: userId, entityType: 'USER', entityId: userId });
-    return toUserDto(requireUser(userId));
+    await audit({ actor, action: 'USER_UNLOCKED', subjectUserId: userId, entityType: 'USER', entityId: userId });
+    return toUserDto((await requireUser(userId)));
   });
 }
 
-export function signOutUserEverywhere(userId: number, actor: Actor): number {
-  requireUser(userId);
-  const revoked = revokeUserSessions(userId, 'REVOKED_BY_ADMIN');
-  audit({ actor, action: 'USER_SESSIONS_REVOKED', subjectUserId: userId, entityType: 'USER', entityId: userId, details: { revoked } });
+export async function signOutUserEverywhere(userId: number, actor: Actor): Promise<number> {
+  await requireUser(userId);
+  const revoked = await revokeUserSessions(userId, 'REVOKED_BY_ADMIN');
+  await audit({ actor, action: 'USER_SESSIONS_REVOKED', subjectUserId: userId, entityType: 'USER', entityId: userId, details: { revoked } });
   return revoked;
 }
 
@@ -235,8 +235,8 @@ interface SecurityRow {
   trading_status: 'ACTIVE' | 'HALTED';
 }
 
-function requireSecurity(symbol: string): SecurityRow {
-  const row = get<SecurityRow>('SELECT id, symbol, security_type, trading_status FROM securities WHERE symbol = ?', symbol);
+async function requireSecurity(symbol: string): Promise<SecurityRow> {
+  const row = await get<SecurityRow>('SELECT id, symbol, security_type, trading_status FROM securities WHERE symbol = ?', symbol);
   if (!row) throw notFound(`Security ${symbol.toUpperCase()} not found`);
   return row;
 }
@@ -295,11 +295,11 @@ function securityColumns(input: Partial<SecurityInput>): Record<string, unknown>
   };
 }
 
-export function createSecurity(input: SecurityInput, actor: Actor) {
-  if (get('SELECT 1 FROM securities WHERE symbol = ?', input.symbol) || get('SELECT 1 FROM ipos WHERE symbol = ? AND listed_at IS NULL', input.symbol)) {
+export async function createSecurity(input: SecurityInput, actor: Actor) {
+  if ((await get('SELECT 1 FROM securities WHERE symbol = ?', input.symbol)) || (await get('SELECT 1 FROM ipos WHERE symbol = ? AND listed_at IS NULL', input.symbol))) {
     throw conflict(`Symbol ${input.symbol} is already in use`);
   }
-  return transaction(() => {
+  return transaction(async () => {
     const now = nowIso();
     const tick = tickSizeFor(input.price);
     const price = Math.round(toPaise(input.price) / tick) * tick;
@@ -320,10 +320,10 @@ export function createSecurity(input: SecurityInput, actor: Actor) {
     );
     const keys = Object.keys(columns);
     const id = Number(
-      run(`INSERT INTO securities (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...keys.map((k) => columns[k]))
+      (await run(`INSERT INTO securities (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`, ...keys.map((k) => columns[k])))
         .lastInsertRowid,
     );
-    run(
+    await run(
       `INSERT INTO quotes (security_id, last_price, prev_close, open, high, low, volume, turnover, trading_date, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
       id,
@@ -335,40 +335,40 @@ export function createSecurity(input: SecurityInput, actor: Actor) {
       getQuoteBySymbol('NIFTY50')?.tradingDate ?? istDate(),
       now,
     );
-    audit({ actor, action: 'SECURITY_CREATED', subjectUserId: null, entityType: 'SECURITY', entityId: id, details: { symbol: input.symbol, name: input.name, price: input.price } });
-    invalidateSecurityCache();
-    return toQuoteDto(reloadQuote(id)!);
+    await audit({ actor, action: 'SECURITY_CREATED', subjectUserId: null, entityType: 'SECURITY', entityId: id, details: { symbol: input.symbol, name: input.name, price: input.price } });
+    await invalidateSecurityCache();
+    return toQuoteDto((await reloadQuote(id))!);
   });
 }
 
-export function updateSecurity(symbol: string, input: Partial<SecurityInput>, actor: Actor) {
-  const security = requireSecurity(symbol);
+export async function updateSecurity(symbol: string, input: Partial<SecurityInput>, actor: Actor) {
+  const security = await requireSecurity(symbol);
   const columns = Object.fromEntries(Object.entries(securityColumns(input)).filter(([, value]) => value !== undefined));
   const keys = Object.keys(columns);
   if (keys.length === 0) throw badRequest('Nothing to update');
-  return transaction(() => {
-    run(
+  return transaction(async () => {
+    await run(
       `UPDATE securities SET ${keys.map((key) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
       ...keys.map((key) => columns[key]),
       nowIso(),
       security.id,
     );
-    audit({ actor, action: 'SECURITY_UPDATED', subjectUserId: null, entityType: 'SECURITY', entityId: security.id, details: { symbol: security.symbol, fields: keys } });
-    invalidateSecurityCache();
-    return toQuoteDto(reloadQuote(security.id)!);
+    await audit({ actor, action: 'SECURITY_UPDATED', subjectUserId: null, entityType: 'SECURITY', entityId: security.id, details: { symbol: security.symbol, fields: keys } });
+    await invalidateSecurityCache();
+    return toQuoteDto((await reloadQuote(security.id))!);
   });
 }
 
 /** Halts or resumes trading; holders are notified. */
-export function setTradingStatus(symbol: string, status: 'ACTIVE' | 'HALTED', reason: string, actor: Actor) {
-  const security = requireSecurity(symbol);
+export async function setTradingStatus(symbol: string, status: 'ACTIVE' | 'HALTED', reason: string, actor: Actor) {
+  const security = await requireSecurity(symbol);
   if (security.security_type === 'INDEX') throw badRequest('Indices are not traded');
   if (security.trading_status === status) throw conflict(`Trading is already ${status === 'ACTIVE' ? 'active' : 'halted'}`);
-  return transaction(() => {
-    run('UPDATE securities SET trading_status = ?, updated_at = ? WHERE id = ?', status, nowIso(), security.id);
-    const holders = all<{ user_id: number }>('SELECT user_id FROM holdings WHERE security_id = ? AND quantity > 0', security.id);
+  return transaction(async () => {
+    await run('UPDATE securities SET trading_status = ?, updated_at = ? WHERE id = ?', status, nowIso(), security.id);
+    const holders = await all<{ user_id: number }>('SELECT user_id FROM holdings WHERE security_id = ? AND quantity > 0', security.id);
     for (const holder of holders) {
-      notify(
+      await notify(
         holder.user_id,
         'SYSTEM',
         status === 'HALTED' ? `Trading halted in ${security.symbol}` : `Trading resumed in ${security.symbol}`,
@@ -376,7 +376,7 @@ export function setTradingStatus(symbol: string, status: 'ACTIVE' | 'HALTED', re
         `/stocks/${encodeURIComponent(security.symbol)}`,
       );
     }
-    audit({
+    await audit({
       actor,
       action: status === 'HALTED' ? 'TRADING_HALTED' : 'TRADING_RESUMED',
       subjectUserId: null,
@@ -384,34 +384,34 @@ export function setTradingStatus(symbol: string, status: 'ACTIVE' | 'HALTED', re
       entityId: security.id,
       details: { symbol: security.symbol, reason, holdersNotified: holders.length },
     });
-    return toQuoteDto(reloadQuote(security.id)!);
+    return toQuoteDto((await reloadQuote(security.id))!);
   });
 }
 
 /** Moves a security to a specific price (useful for demonstrating limit orders and alerts). */
-export function setSecurityPrice(symbol: string, price: number, actor: Actor) {
-  const security = requireSecurity(symbol);
+export async function setSecurityPrice(symbol: string, price: number, actor: Actor) {
+  const security = await requireSecurity(symbol);
   if (security.security_type === 'INDEX') throw badRequest('Index values are derived from their constituents');
   if (isExternallyPriced(security.id)) throw badRequest(`${security.symbol} is priced by the live market feed`);
-  const quote = setPrice(security.id, toPaise(price));
-  audit({ actor, action: 'SECURITY_PRICE_SET', subjectUserId: null, entityType: 'SECURITY', entityId: security.id, details: { symbol: security.symbol, requested: price, applied: toRupees(quote.last) } });
+  const quote = await setPrice(security.id, toPaise(price));
+  await audit({ actor, action: 'SECURITY_PRICE_SET', subjectUserId: null, entityType: 'SECURITY', entityId: security.id, details: { symbol: security.symbol, requested: price, applied: toRupees(quote.last) } });
   return toQuoteDto(quote);
 }
 
-export function sendAnnouncement(title: string, message: string, link: string | null, actor: Actor) {
-  const delivered = transaction(() => notifyAllUsers('SYSTEM', title, message, link));
-  audit({ actor, action: 'ANNOUNCEMENT_SENT', subjectUserId: null, entityType: 'ANNOUNCEMENT', details: { title, delivered } });
+export async function sendAnnouncement(title: string, message: string, link: string | null, actor: Actor) {
+  const delivered = await transaction(() => notifyAllUsers('SYSTEM', title, message, link));
+  await audit({ actor, action: 'ANNOUNCEMENT_SENT', subjectUserId: null, entityType: 'ANNOUNCEMENT', details: { title, delivered } });
   return { delivered };
 }
 
-export function listAllFundTransactions(query: { userId?: number; type?: 'DEPOSIT' | 'WITHDRAWAL'; page: number; pageSize: number }) {
+export async function listAllFundTransactions(query: { userId?: number; type?: 'DEPOSIT' | 'WITHDRAWAL'; page: number; pageSize: number }) {
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.userId) (where.push('f.user_id = ?'), params.push(query.userId));
   if (query.type) (where.push('f.txn_type = ?'), params.push(query.type));
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const total = count(`SELECT COUNT(*) AS n FROM fund_transactions f ${clause}`, ...params);
-  const rows = all<{ id: number; user_id: number; txn_type: string; amount: number; method: string; status: string; reference: string; bank_account: string | null; created_at: string; full_name: string; email: string }>(
+  const total = await count(`SELECT COUNT(*) AS n FROM fund_transactions f ${clause}`, ...params);
+  const rows = await all<{ id: number; user_id: number; txn_type: string; amount: number; method: string; status: string; reference: string; bank_account: string | null; created_at: string; full_name: string; email: string }>(
     `SELECT f.*, u.full_name, u.email FROM fund_transactions f JOIN users u ON u.id = f.user_id ${clause} ORDER BY f.id DESC LIMIT ? OFFSET ?`,
     ...params,
     query.pageSize,

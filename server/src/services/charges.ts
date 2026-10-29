@@ -12,8 +12,8 @@ export interface ChargeBreakdown {
 }
 
 /** Brokerage and statutory charges for a delivery trade of the given value (all in paise). */
-export function calculateCharges(side: 'BUY' | 'SELL', value: number): ChargeBreakdown {
-  const rates = getSetting('charges');
+export async function calculateCharges(side: 'BUY' | 'SELL', value: number): Promise<ChargeBreakdown> {
+  const rates = await getSetting('charges');
   const brokerage = Math.min(percentOf(value, rates.brokeragePct), toPaise(rates.brokerageMax));
   const stt = percentOf(value, rates.sttPct);
   const exchangeCharges = percentOf(value, rates.exchangePct);

@@ -59,28 +59,28 @@ router.get('/', (req, res) => {
   res.json(listSecurities({ ...query, type: query.type as never }));
 });
 
-router.get('/:symbol', (req, res) => {
+router.get('/:symbol', async (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
-  const detail = getSecurityDetail(symbol);
+  const detail = await getSecurityDetail(symbol);
   const user = currentUser(req);
   const securityId = getQuoteBySymbol(symbol)!.securityId;
   res.json({
     ...detail,
-    position: getPosition(user.id, securityId),
-    watchlists: watchlistsContaining(user.id, securityId),
-    alerts: listAlerts(user.id, { symbol, status: 'ACTIVE' }),
+    position: (await getPosition(user.id, securityId)),
+    watchlists: (await watchlistsContaining(user.id, securityId)),
+    alerts: (await listAlerts(user.id, { symbol, status: 'ACTIVE' })),
   });
 });
 
-router.get('/:symbol/history', (req, res) => {
+router.get('/:symbol/history', async (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
   const { range } = parse(z.object({ range: z.enum(HISTORY_RANGES).default('1D') }), req.query);
-  res.json(getPriceHistory(symbol, range));
+  res.json((await getPriceHistory(symbol, range)));
 });
 
-router.get('/:symbol/constituents', (req, res) => {
+router.get('/:symbol/constituents', async (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
-  res.json({ items: getIndexConstituents(symbol) });
+  res.json({ items: (await getIndexConstituents(symbol)) });
 });
 
 export default router;

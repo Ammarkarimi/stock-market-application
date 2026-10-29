@@ -3,6 +3,7 @@
  * (later admins can be promoted from the admin panel):
  *   npm run promote-admin -w server -- you@example.com     (development)
  *   node server/dist/cli/promote-admin.js you@example.com   (production build)
+ * Set DATABASE_URL to change a deployed database, e.g. after `vercel env pull`.
  */
 import { closeDatabase } from '../db/index.js';
 import { SYSTEM_ACTOR } from '../services/actor.js';
@@ -16,17 +17,17 @@ if (!email) {
 }
 
 try {
-  const user = findUserByEmail(email);
+  const user = await findUserByEmail(email);
   if (!user) throw new Error(`No account is registered with ${email}`);
   if (user.role === 'ADMIN') {
     console.log(`${user.email} is already an administrator.`);
   } else {
-    setUserRole(user.id, 'ADMIN', { ...SYSTEM_ACTOR, userAgent: 'promote-admin CLI' });
+    await setUserRole(user.id, 'ADMIN', { ...SYSTEM_ACTOR, userAgent: 'promote-admin CLI' });
     console.log(`${user.email} is now an administrator. They need to sign in again.`);
   }
 } catch (err) {
   console.error((err as Error).message);
   process.exitCode = 1;
 } finally {
-  closeDatabase();
+  await closeDatabase();
 }

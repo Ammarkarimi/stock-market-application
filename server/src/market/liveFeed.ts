@@ -70,9 +70,9 @@ async function eachLimited<T>(items: T[], limit: number, task: (item: T) => Prom
  * Real exchange-listed securities from the reference catalogue. Securities added later (admin listings and
  * the fictional companies listed through the IPO simulation) keep simulated prices.
  */
-function loadLiveSecurities(): LiveSecurity[] {
+async function loadLiveSecurities(): Promise<LiveSecurity[]> {
   const catalogue = new Set([...STOCKS, ...FUNDS, ...INDICES].map((s) => s.symbol));
-  return all<{ id: number; symbol: string; security_type: string }>('SELECT id, symbol, security_type FROM securities ORDER BY id')
+  return (await all<{ id: number; symbol: string; security_type: string }>('SELECT id, symbol, security_type FROM securities ORDER BY id'))
     .filter((row) => catalogue.has(row.symbol))
     .map((row) => ({ id: row.id, symbol: row.symbol, type: row.security_type, ticker: yahooTicker(row.symbol) }));
 }
@@ -87,7 +87,7 @@ async function refreshQuotes(): Promise<MarketPhase> {
   const phase = phaseOf(benchmark.marketState);
   const asOf = benchmark.regularMarketTime * 1000;
   const sessionDate = istDate(asOf);
-  alignTradingDate(sessionDate);
+  await alignTradingDate(sessionDate);
   updateMarketSession({
     phase,
     asOf,
@@ -114,21 +114,21 @@ async function refreshQuotes(): Promise<MarketPhase> {
       time: q.regularMarketTime * 1000,
     });
   }
-  applyExternalQuotes(updates);
+  await applyExternalQuotes(updates);
 
   // Outside the session, DAY orders placed before the close have expired; later ones wait for the next session.
-  if (phase !== 'OPEN') expireDayOrdersPlacedBefore(new Date(asOf).toISOString());
+  if (phase !== 'OPEN') await expireDayOrdersPlacedBefore(new Date(asOf).toISOString());
 
   if (nowMs() - fundamentalsFromQuotesAt > FUNDAMENTALS_FROM_QUOTES_MS) {
-    updateFundamentalsFromQuotes(byTicker);
+    await updateFundamentalsFromQuotes(byTicker);
     fundamentalsFromQuotesAt = nowMs();
   }
   return phase;
 }
 
 /** Per-share figures and liquidity that come with every quote. */
-function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): void {
-  transaction(() => {
+async function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): Promise<void> {
+  await transaction(async () => {
     for (const security of securities) {
       const q = byTicker.get(security.ticker);
       if (!q?.regularMarketPrice || security.type === 'INDEX') continue;
@@ -136,7 +136,7 @@ function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): void {
       const quote = getQuote(security.id);
       if (quote) quote.tickSize = tickSize;
       const perShare = (v: number | undefined) => (typeof v === 'number' && Number.isFinite(v) ? paise(v) : null);
-      run(
+      await run(
         `UPDATE securities SET tick_size = ?, avg_volume = COALESCE(?, avg_volume),
            eps = COALESCE(?, eps), book_value = COALESCE(?, book_value),
            shares_outstanding = COALESCE(?, shares_outstanding), dividend_per_share = COALESCE(?, dividend_per_share),
@@ -154,21 +154,21 @@ function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): void {
       );
     }
   });
-  invalidateSecurityCache();
+  await invalidateSecurityCache();
 }
 
-function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full: boolean): void {
+async function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full: boolean): Promise<void> {
   const tradingDate = currentTradingDate();
   const rows = candles.map((c) => ({ ...c, date: istDate(c.time * 1000) })).filter((c) => c.date < tradingDate);
-  transaction(() => {
-    if (full) run('DELETE FROM price_history WHERE security_id = ?', security.id);
-    else if (rows.length > 0) run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, rows[0]!.date);
+  await transaction(async () => {
+    if (full) await run('DELETE FROM price_history WHERE security_id = ?', security.id);
+    else if (rows.length > 0) await run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, rows[0]!.date);
     // The trading day itself lives in the quote.
-    run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, tradingDate);
+    await run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, tradingDate);
     for (const c of rows) {
       const open = paise(c.open);
       const close = paise(c.close);
-      run(
+      await run(
         `INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(security_id, date) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low,
            close = excluded.close, volume = excluded.volume`,
@@ -184,17 +184,17 @@ function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full:
   });
 }
 
-function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): void {
+async function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): Promise<void> {
   if (candles.length === 0) return;
   const bars = new Map<number, YahooCandle>();
   for (const c of candles) bars.set(Math.floor((c.time * 1000) / BAR_MS) * BAR_MS, c);
   const first = Math.min(...bars.keys());
-  transaction(() => {
-    run('DELETE FROM intraday_prices WHERE security_id = ? AND ts >= ?', security.id, first);
+  await transaction(async () => {
+    await run('DELETE FROM intraday_prices WHERE security_id = ? AND ts >= ?', security.id, first);
     for (const [ts, c] of bars) {
       const open = paise(c.open);
       const close = paise(c.close);
-      run(
+      await run(
         'INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
         security.id,
         ts,
@@ -210,32 +210,32 @@ function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): void {
 
 /** Replaces stored daily and five-minute history with the exchange's. */
 async function syncHistory(): Promise<void> {
-  const lastSync = getState('liveHistorySyncedAt');
+  const lastSync = await getState('liveHistorySyncedAt');
   const full = !lastSync || nowMs() - Date.parse(lastSync) > FULL_HISTORY_AFTER_DAYS * 86_400_000;
   const started = nowMs();
   const failures = await eachLimited(securities, CONCURRENCY, async (security) => {
     const daily = await client.chart(security.ticker, full ? '5y' : '1mo', '1d');
     if (daily.length === 0) throw new Error(`no price history for ${security.symbol}`);
-    storeDailyHistory(security, daily, full);
-    storeIntraday(security, await client.chart(security.ticker, '5d', '5m'));
+    await storeDailyHistory(security, daily, full);
+    await storeIntraday(security, await client.chart(security.ticker, '5d', '5m'));
   });
   resetCurrentBars();
-  if (failures < securities.length / 2) setState('liveHistorySyncedAt', nowIso());
+  if (failures < securities.length / 2) await setState('liveHistorySyncedAt', nowIso());
   console.log(`Live market data: ${full ? 'five years' : 'one month'} of history for ${securities.length - failures} securities in ${Math.round((nowMs() - started) / 1000)}s`);
 }
 
 /** Company profile, ratios and annual results; refreshed once a day in the background. */
 async function syncFundamentals(): Promise<void> {
   const today = istDate();
-  if (getState('liveFundamentalsSyncedOn') === today) return;
+  if ((await getState('liveFundamentalsSyncedOn')) === today) return;
   const stocks = securities.filter((s) => s.type === 'STOCK');
   const round2 = (v: number) => Math.round(v * 100) / 100;
   const crore = (v: number | null) => (v === null ? null : Math.round(v / 1e7));
   const failures = await eachLimited(stocks, 3, async (security) => {
     const [profile, annual] = await Promise.all([client.profile(security.ticker), client.annualFinancials(security.ticker)]);
-    transaction(() => {
+    await transaction(async () => {
       if (profile) {
-        run(
+        await run(
           `UPDATE securities SET description = COALESCE(?, description), headquarters = COALESCE(?, headquarters),
              beta = COALESCE(?, beta), roe = COALESCE(?, roe), debt_to_equity = COALESCE(?, debt_to_equity),
              revenue_cr = COALESCE(?, revenue_cr), net_profit_cr = COALESCE(?, net_profit_cr), updated_at = ?
@@ -253,7 +253,7 @@ async function syncFundamentals(): Promise<void> {
       }
       for (const year of annual) {
         if (year.revenue === null && year.netIncome === null) continue;
-        run(
+        await run(
           `INSERT INTO financials (security_id, period_end, revenue_cr, net_profit_cr, updated_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(security_id, period_end) DO UPDATE SET revenue_cr = excluded.revenue_cr,
              net_profit_cr = excluded.net_profit_cr, updated_at = excluded.updated_at`,
@@ -266,8 +266,8 @@ async function syncFundamentals(): Promise<void> {
       }
     });
   });
-  invalidateSecurityCache();
-  if (failures < stocks.length / 2) setState('liveFundamentalsSyncedOn', today);
+  await invalidateSecurityCache();
+  if (failures < stocks.length / 2) await setState('liveFundamentalsSyncedOn', today);
   console.log(`Live market data: fundamentals for ${stocks.length - failures} of ${stocks.length} companies`);
 }
 
@@ -300,7 +300,7 @@ async function poll(): Promise<void> {
  */
 export async function startLiveFeed(provider: YahooFinance = new YahooFinance()): Promise<void> {
   client = provider;
-  securities = loadLiveSecurities();
+  securities = await loadLiveSecurities();
   setExternallyPriced(securities.map((s) => s.id));
   updateMarketSession({ source: 'yahoo', phase: 'CLOSED', delayMinutes: 15, lastError: null });
   fundamentalsFromQuotesAt = 0;

@@ -41,7 +41,7 @@ export interface SessionDto {
 const idleMs = () => config.sessionIdleMinutes * 60_000;
 const TOUCH_INTERVAL_MS = 30_000;
 
-export function createSession(userId: number, actor: Actor): { token: string; session: SessionRow } {
+export async function createSession(userId: number, actor: Actor): Promise<{ token: string; session: SessionRow }> {
   const token = randomToken(32);
   const now = nowIso();
   const session: SessionRow = {
@@ -56,7 +56,7 @@ export function createSession(userId: number, actor: Actor): { token: string; se
     revoked_at: null,
     revoked_reason: null,
   };
-  run(
+  await run(
     `INSERT INTO sessions (id, user_id, csrf_token, ip, user_agent, created_at, last_seen_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     session.id,
@@ -76,60 +76,60 @@ function isExpired(session: SessionRow, at: number): boolean {
 }
 
 /** Looks up the session for a raw cookie token; expired sessions are revoked on sight. */
-export function resolveSession(token: string | undefined): AuthContext | null {
+export async function resolveSession(token: string | undefined): Promise<AuthContext | null> {
   if (!token || token.length > 200) return null;
-  const session = get<SessionRow>('SELECT * FROM sessions WHERE id = ? AND revoked_at IS NULL', sha256(token));
+  const session = await get<SessionRow>('SELECT * FROM sessions WHERE id = ? AND revoked_at IS NULL', sha256(token));
   if (!session) return null;
   const at = nowMs();
   if (isExpired(session, at)) {
-    revokeSession(session.id, 'EXPIRED');
+    await revokeSession(session.id, 'EXPIRED');
     return null;
   }
-  const user = findUserById(session.user_id);
+  const user = await findUserById(session.user_id);
   if (!user || user.status !== 'ACTIVE') {
-    revokeSession(session.id, user ? 'USER_SUSPENDED' : 'USER_DELETED');
+    await revokeSession(session.id, user ? 'USER_SUSPENDED' : 'USER_DELETED');
     return null;
   }
   if (at - Date.parse(session.last_seen_at) > TOUCH_INTERVAL_MS) {
     session.last_seen_at = new Date(at).toISOString();
-    run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', session.last_seen_at, session.id);
+    await run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', session.last_seen_at, session.id);
   }
   return { user, session };
 }
 
-export function revokeSession(sessionId: string, reason: string): boolean {
+export async function revokeSession(sessionId: string, reason: string): Promise<boolean> {
   const changed =
-    run(
+    (await run(
       'UPDATE sessions SET revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked_at IS NULL',
       nowIso(),
       reason,
       sessionId,
-    ).changes > 0;
+    )).changes > 0;
   if (changed) emitSessionRevoked(sessionId);
   return changed;
 }
 
 /** Revokes every active session of a user, optionally keeping one (the caller's own). */
-export function revokeUserSessions(userId: number, reason: string, exceptSessionId?: string): number {
-  const sessions = all<{ id: string }>(
+export async function revokeUserSessions(userId: number, reason: string, exceptSessionId?: string): Promise<number> {
+  const sessions = await all<{ id: string }>(
     'SELECT id FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND id != ?',
     userId,
     exceptSessionId ?? '',
   );
-  for (const session of sessions) revokeSession(session.id, reason);
+  for (const session of sessions) await revokeSession(session.id, reason);
   return sessions.length;
 }
 
-export function getUserSession(userId: number, sessionId: string): SessionRow | undefined {
-  return get<SessionRow>('SELECT * FROM sessions WHERE id = ? AND user_id = ?', sessionId, userId);
+export async function getUserSession(userId: number, sessionId: string): Promise<SessionRow | undefined> {
+  return await get<SessionRow>('SELECT * FROM sessions WHERE id = ? AND user_id = ?', sessionId, userId);
 }
 
-export function listActiveSessions(userId: number, currentSessionId?: string): SessionDto[] {
+export async function listActiveSessions(userId: number, currentSessionId?: string): Promise<SessionDto[]> {
   const at = nowMs();
-  return all<SessionRow>(
+  return (await all<SessionRow>(
     'SELECT * FROM sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY last_seen_at DESC',
     userId,
-  )
+  ))
     .filter((session) => !isExpired(session, at))
     .map((session) => ({
       id: session.id,
@@ -144,14 +144,14 @@ export function listActiveSessions(userId: number, currentSessionId?: string): S
 }
 
 /** Marks lapsed sessions as expired and drops session rows older than 30 days. */
-export function cleanupSessions(): void {
+export async function cleanupSessions(): Promise<void> {
   const at = nowMs();
-  const active = all<SessionRow>('SELECT * FROM sessions WHERE revoked_at IS NULL');
-  for (const session of active) if (isExpired(session, at)) revokeSession(session.id, 'EXPIRED');
-  run('DELETE FROM sessions WHERE revoked_at IS NOT NULL AND revoked_at < ?', new Date(at - 30 * 86_400_000).toISOString());
+  const active = await all<SessionRow>('SELECT * FROM sessions WHERE revoked_at IS NULL');
+  for (const session of active) if (isExpired(session, at)) await revokeSession(session.id, 'EXPIRED');
+  await run('DELETE FROM sessions WHERE revoked_at IS NOT NULL AND revoked_at < ?', new Date(at - 30 * 86_400_000).toISOString());
 }
 
-export function countActiveSessions(): number {
+export async function countActiveSessions(): Promise<number> {
   const at = nowMs();
-  return all<SessionRow>('SELECT * FROM sessions WHERE revoked_at IS NULL').filter((s) => !isExpired(s, at)).length;
+  return (await all<SessionRow>('SELECT * FROM sessions WHERE revoked_at IS NULL')).filter((s) => !isExpired(s, at)).length;
 }

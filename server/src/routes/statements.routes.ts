@@ -26,14 +26,14 @@ function period(query: unknown) {
   return { from, to, type: parsed.type as (typeof LEDGER_ENTRY_TYPES)[number] | undefined };
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { from, to, type } = period(req.query);
-  res.json(getStatement(currentUser(req).id, from, to, type));
+  res.json((await getStatement(currentUser(req).id, from, to, type)));
 });
 
-router.get('/ledger.csv', (req, res) => {
+router.get('/ledger.csv', async (req, res) => {
   const { from, to, type } = period(req.query);
-  const statement = getStatement(currentUser(req).id, from, to, type);
+  const statement = await getStatement(currentUser(req).id, from, to, type);
   const csv = toCsv(
     ['Date', 'Type', 'Description', 'Reference', 'Debit (INR)', 'Credit (INR)', 'Balance (INR)'],
     statement.entries.map((e) => [
@@ -46,13 +46,13 @@ router.get('/ledger.csv', (req, res) => {
       e.balanceAfter.toFixed(2),
     ]),
   );
-  audit({ actor: actorFrom(req), action: 'STATEMENT_DOWNLOADED', entityType: 'STATEMENT', details: { kind: 'ledger', from, to } });
+  await audit({ actor: actorFrom(req), action: 'STATEMENT_DOWNLOADED', entityType: 'STATEMENT', details: { kind: 'ledger', from, to } });
   res.attachment(`statement_${from}_${to}.csv`).type('text/csv').send(csv);
 });
 
-router.get('/trades.csv', (req, res) => {
+router.get('/trades.csv', async (req, res) => {
   const { from, to } = period(req.query);
-  const trades = listTrades({ userId: currentUser(req).id, from, to, page: 1, pageSize: 100_000 });
+  const trades = await listTrades({ userId: currentUser(req).id, from, to, page: 1, pageSize: 100_000 });
   const csv = toCsv(
     ['Date', 'Trade ID', 'Order ID', 'Source', 'Symbol', 'Side', 'Quantity', 'Price', 'Value', 'Charges', 'Net Amount', 'Realized P&L'],
     trades.items.map((t) => [
@@ -70,7 +70,7 @@ router.get('/trades.csv', (req, res) => {
       t.realizedPnl === null ? '' : t.realizedPnl.toFixed(2),
     ]),
   );
-  audit({ actor: actorFrom(req), action: 'STATEMENT_DOWNLOADED', entityType: 'STATEMENT', details: { kind: 'trades', from, to } });
+  await audit({ actor: actorFrom(req), action: 'STATEMENT_DOWNLOADED', entityType: 'STATEMENT', details: { kind: 'trades', from, to } });
   res.attachment(`trades_${from}_${to}.csv`).type('text/csv').send(csv);
 });
 

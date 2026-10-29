@@ -160,32 +160,32 @@ export function toTradeDto(row: TradeJoinRow): TradeDto {
   };
 }
 
-function loadOrder(orderId: number): OrderJoinRow | undefined {
-  return get<OrderJoinRow>(
+async function loadOrder(orderId: number): Promise<OrderJoinRow | undefined> {
+  return await get<OrderJoinRow>(
     'SELECT o.*, s.symbol, s.name FROM orders o JOIN securities s ON s.id = o.security_id WHERE o.id = ?',
     orderId,
   );
 }
 
-function orderDtoById(orderId: number): OrderDto {
-  return toOrderDto(loadOrder(orderId)!);
+async function orderDtoById(orderId: number): Promise<OrderDto> {
+  return toOrderDto((await loadOrder(orderId))!);
 }
 
 const sideVerb = (side: OrderSide) => (side === 'BUY' ? 'Buy' : 'Sell');
 
 /** Shares a user holds that are not reserved by open sell orders. */
-export function freeQuantity(userId: number, securityId: number, excludeOrderId?: number): number {
+export async function freeQuantity(userId: number, securityId: number, excludeOrderId?: number): Promise<number> {
   const held =
-    get<{ quantity: number }>('SELECT quantity FROM holdings WHERE user_id = ? AND security_id = ?', userId, securityId)
+    (await get<{ quantity: number }>('SELECT quantity FROM holdings WHERE user_id = ? AND security_id = ?', userId, securityId))
       ?.quantity ?? 0;
   const reserved =
-    get<{ q: number | null }>(
+    (await get<{ q: number | null }>(
       `SELECT SUM(quantity) AS q FROM orders
         WHERE user_id = ? AND security_id = ? AND side = 'SELL' AND status = 'OPEN' AND id != ?`,
       userId,
       securityId,
       excludeOrderId ?? 0,
-    )?.q ?? 0;
+    ))?.q ?? 0;
   return held - reserved;
 }
 
@@ -216,9 +216,9 @@ function tradableQuote(symbol: string): LiveQuote {
 }
 
 /** Structural validation; violations are input errors (400) and never create an order. */
-function validateInput(input: OrderInput): ValidatedOrder {
+async function validateInput(input: OrderInput): Promise<ValidatedOrder> {
   const quote = tradableQuote(input.symbol);
-  const maxQuantity = getSetting('trading').maxOrderQuantity;
+  const maxQuantity = (await getSetting('trading')).maxOrderQuantity;
   if (!Number.isInteger(input.quantity) || input.quantity < 1) throw badRequest('Quantity must be a whole number of at least 1');
   if (input.quantity > maxQuantity) throw badRequest(`Quantity cannot exceed ${maxQuantity.toLocaleString('en-IN')} per order`);
   let limitPrice: number | null = null;
@@ -277,16 +277,16 @@ export interface OrderPreview {
 }
 
 /** Estimates value, charges and funds impact without placing anything. */
-export function previewOrder(userId: number, input: OrderInput): OrderPreview {
-  const order = validateInput(input);
+export async function previewOrder(userId: number, input: OrderInput): Promise<OrderPreview> {
+  const order = await validateInput(input);
   const { quote } = order;
   const marketable = isMarketable(order, quote);
   const price = order.orderType === 'MARKET' || marketable ? quote.last : order.limitPrice!;
   const value = order.quantity * price;
-  const charges = calculateCharges(order.side, value);
+  const charges = await calculateCharges(order.side, value);
   const total = order.side === 'BUY' ? value + charges.total : value - charges.total;
-  const available = availableBalance(userId);
-  const free = freeQuantity(userId, quote.securityId);
+  const available = await availableBalance(userId);
+  const free = await freeQuantity(userId, quote.securityId);
   const circuit = circuitLimits(quote);
   const issues: string[] = [];
   if (quote.tradingStatus !== 'ACTIVE') issues.push(`Trading in ${quote.symbol} is currently halted`);
@@ -330,16 +330,16 @@ function emitOrderUpdate(userId: number, orderId: number): void {
   });
 }
 
-function rejectOrder(order: OrderRow, symbol: string, reason: string, actor: Actor): void {
+async function rejectOrder(order: OrderRow, symbol: string, reason: string, actor: Actor): Promise<void> {
   const now = nowIso();
-  run(
+  await run(
     "UPDATE orders SET status = 'REJECTED', status_reason = ?, blocked_amount = 0, updated_at = ? WHERE id = ?",
     reason,
     now,
     order.id,
   );
-  notify(order.user_id, 'ORDER', 'Order rejected', `${sideVerb(order.side)} ${order.quantity} ${symbol}: ${reason}`, '/orders?tab=history');
-  audit({ actor, action: 'ORDER_REJECTED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
+  await notify(order.user_id, 'ORDER', 'Order rejected', `${sideVerb(order.side)} ${order.quantity} ${symbol}: ${reason}`, '/orders?tab=history');
+  await audit({ actor, action: 'ORDER_REJECTED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
   emitOrderUpdate(order.user_id, order.id);
 }
 
@@ -348,9 +348,9 @@ function rejectOrder(order: OrderRow, symbol: string, reason: string, actor: Act
  * records the trade. Must run inside a transaction. Returns false (and rejects the order) when funds
  * or shares are no longer sufficient.
  */
-function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: Actor, historical?: ExecutionContext): boolean {
+async function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: Actor, historical?: ExecutionContext): Promise<boolean> {
   const value = order.quantity * price;
-  const charges = calculateCharges(order.side, value);
+  const charges = await calculateCharges(order.side, value);
   const tradingDate = historical?.tradingDate ?? currentTradingDate();
   const now = nowIso();
   let realizedPnl: number | null = null;
@@ -358,15 +358,15 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
 
   if (order.side === 'BUY') {
     netAmount = value + charges.total;
-    if (availableBalance(order.user_id, order.id) < netAmount) {
-      rejectOrder(order, quote.symbol, `Insufficient funds: ${formatInr(netAmount)} required`, actor);
+    if ((await availableBalance(order.user_id, order.id)) < netAmount) {
+      await rejectOrder(order, quote.symbol, `Insufficient funds: ${formatInr(netAmount)} required`, actor);
       return false;
     }
-    run(
+    await run(
       `INSERT INTO holdings (user_id, security_id, quantity, invested, realized_pnl, first_bought_at, updated_at)
        VALUES (?, ?, ?, ?, 0, ?, ?)
-       ON CONFLICT(user_id, security_id) DO UPDATE SET quantity = quantity + excluded.quantity,
-         invested = invested + excluded.invested, updated_at = excluded.updated_at,
+       ON CONFLICT(user_id, security_id) DO UPDATE SET quantity = holdings.quantity + excluded.quantity,
+         invested = holdings.invested + excluded.invested, updated_at = excluded.updated_at,
          first_bought_at = CASE WHEN holdings.quantity = 0 THEN excluded.first_bought_at ELSE holdings.first_bought_at END`,
       order.user_id,
       order.security_id,
@@ -377,18 +377,18 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
     );
   } else {
     netAmount = value - charges.total;
-    const holding = get<{ quantity: number; invested: number }>(
+    const holding = await get<{ quantity: number; invested: number }>(
       'SELECT quantity, invested FROM holdings WHERE user_id = ? AND security_id = ?',
       order.user_id,
       order.security_id,
     );
     if (!holding || holding.quantity < order.quantity) {
-      rejectOrder(order, quote.symbol, 'Insufficient holdings', actor);
+      await rejectOrder(order, quote.symbol, 'Insufficient holdings', actor);
       return false;
     }
     const costRemoved = Math.round((holding.invested * order.quantity) / holding.quantity);
     realizedPnl = value - costRemoved;
-    run(
+    await run(
       `UPDATE holdings SET quantity = quantity - ?, invested = invested - ?, realized_pnl = realized_pnl + ?, updated_at = ?
         WHERE user_id = ? AND security_id = ?`,
       order.quantity,
@@ -401,18 +401,18 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
   }
 
   // Release the order's own reservation before moving cash.
-  run('UPDATE orders SET blocked_amount = 0 WHERE id = ?', order.id);
+  await run('UPDATE orders SET blocked_amount = 0 WHERE id = ?', order.id);
   const priceText = formatInr(price);
   if (order.side === 'BUY') {
-    postLedger(order.user_id, { type: 'BUY', amount: -value, referenceType: 'ORDER', referenceId: order.id, description: `Bought ${order.quantity} ${quote.symbol} @ ${priceText}` });
+    await postLedger(order.user_id, { type: 'BUY', amount: -value, referenceType: 'ORDER', referenceId: order.id, description: `Bought ${order.quantity} ${quote.symbol} @ ${priceText}` });
   } else {
-    postLedger(order.user_id, { type: 'SELL', amount: value, referenceType: 'ORDER', referenceId: order.id, description: `Sold ${order.quantity} ${quote.symbol} @ ${priceText}` });
+    await postLedger(order.user_id, { type: 'SELL', amount: value, referenceType: 'ORDER', referenceId: order.id, description: `Sold ${order.quantity} ${quote.symbol} @ ${priceText}` });
   }
   if (charges.total > 0) {
-    postLedger(order.user_id, { type: 'CHARGES', amount: -charges.total, referenceType: 'ORDER', referenceId: order.id, description: `Brokerage & charges for order #${order.id}` });
+    await postLedger(order.user_id, { type: 'CHARGES', amount: -charges.total, referenceType: 'ORDER', referenceId: order.id, description: `Brokerage & charges for order #${order.id}` });
   }
 
-  const trade = run(
+  const trade = await run(
     `INSERT INTO trades (order_id, source, user_id, security_id, side, quantity, price, value, brokerage, stt, exchange_charges,
        sebi_fees, stamp_duty, gst, total_charges, net_amount, realized_pnl, trading_date, executed_at)
      VALUES (?, 'ORDER', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -435,7 +435,7 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
     tradingDate,
     now,
   );
-  run(
+  await run(
     `UPDATE orders SET status = 'EXECUTED', status_reason = NULL, filled_quantity = quantity, average_price = ?,
        blocked_amount = 0, executed_at = ?, updated_at = ? WHERE id = ?`,
     price,
@@ -447,14 +447,14 @@ function executeOrder(order: OrderRow, quote: LiveQuote, price: number, actor: A
 
   const verb = order.side === 'BUY' ? 'Bought' : 'Sold';
   const pnlText = realizedPnl !== null ? ` Realized P&L: ${formatInr(realizedPnl)}.` : '';
-  notify(
+  await notify(
     order.user_id,
     'ORDER',
     'Order executed',
     `${verb} ${order.quantity} ${quote.symbol} at ${priceText}. ${order.side === 'BUY' ? 'Total debit' : 'Net credit'}: ${formatInr(netAmount)}.${pnlText}`,
     `/orders?tab=history`,
   );
-  audit({
+  await audit({
     actor,
     action: 'ORDER_EXECUTED',
     subjectUserId: order.user_id,
@@ -477,57 +477,57 @@ export interface ExecutionContext {
 }
 
 /** Decides what happens to a freshly placed (or modified) order against the current market. */
-function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, historical?: ExecutionContext): void {
+async function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, historical?: ExecutionContext): Promise<void> {
   if (quote.tradingStatus !== 'ACTIVE') {
-    rejectOrder(order, quote.symbol, `Trading in ${quote.symbol} is halted`, actor);
+    await rejectOrder(order, quote.symbol, `Trading in ${quote.symbol} is halted`, actor);
     return;
   }
   const { lower, upper } = circuitLimits(quote);
   if (order.limit_price !== null && (order.limit_price < lower || order.limit_price > upper)) {
-    rejectOrder(order, quote.symbol, `Limit price outside the circuit range ${formatInr(lower)} – ${formatInr(upper)}`, actor);
+    await rejectOrder(order, quote.symbol, `Limit price outside the circuit range ${formatInr(lower)} – ${formatInr(upper)}`, actor);
     return;
   }
   if (historical) {
-    executeOrder(order, quote, historical.price, actor, historical);
+    await executeOrder(order, quote, historical.price, actor, historical);
     return;
   }
   const marketable = isMarketable({ side: order.side, orderType: order.order_type, limitPrice: order.limit_price }, quote);
   if (marketable) {
-    executeOrder(order, quote, quote.last, actor);
+    await executeOrder(order, quote, quote.last, actor);
     return;
   }
   if (order.validity === 'IOC') {
     const now = nowIso();
-    run(
+    await run(
       "UPDATE orders SET status = 'CANCELLED', status_reason = ?, cancelled_at = ?, updated_at = ? WHERE id = ?",
       'IOC order could not be executed immediately',
       now,
       now,
       order.id,
     );
-    notify(order.user_id, 'ORDER', 'IOC order cancelled', `${sideVerb(order.side)} ${order.quantity} ${quote.symbol} was not marketable and has been cancelled.`, '/orders?tab=history');
-    audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason: 'IOC not marketable' } });
+    await notify(order.user_id, 'ORDER', 'IOC order cancelled', `${sideVerb(order.side)} ${order.quantity} ${quote.symbol} was not marketable and has been cancelled.`, '/orders?tab=history');
+    await audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason: 'IOC not marketable' } });
     emitOrderUpdate(order.user_id, order.id);
     return;
   }
   if (order.side === 'BUY') {
     const value = order.quantity * order.limit_price!;
-    const block = value + calculateCharges('BUY', value).total;
-    const available = availableBalance(order.user_id, order.id);
+    const block = value + (await calculateCharges('BUY', value)).total;
+    const available = await availableBalance(order.user_id, order.id);
     if (available < block) {
-      rejectOrder(order, quote.symbol, `Insufficient funds: ${formatInr(block)} required, ${formatInr(Math.max(0, available))} available`, actor);
+      await rejectOrder(order, quote.symbol, `Insufficient funds: ${formatInr(block)} required, ${formatInr(Math.max(0, available))} available`, actor);
       return;
     }
-    run('UPDATE orders SET blocked_amount = ?, updated_at = ? WHERE id = ?', block, nowIso(), order.id);
-  } else if (freeQuantity(order.user_id, order.security_id, order.id) < order.quantity) {
-    rejectOrder(order, quote.symbol, 'Insufficient holdings', actor);
+    await run('UPDATE orders SET blocked_amount = ?, updated_at = ? WHERE id = ?', block, nowIso(), order.id);
+  } else if ((await freeQuantity(order.user_id, order.security_id, order.id)) < order.quantity) {
+    await rejectOrder(order, quote.symbol, 'Insufficient holdings', actor);
     return;
   }
   emitOrderUpdate(order.user_id, order.id);
 }
 
 export async function placeOrder(userId: number, input: OrderInput, pin: string | undefined, actor: Actor): Promise<OrderDto> {
-  const order = validateInput(input);
+  const order = await validateInput(input);
   const closed = sessionIssue(order.orderType, order.validity);
   if (closed) throw unprocessable('MARKET_CLOSED', closed);
   await verifyTransactionPin(userId, pin, actor, 'ORDER');
@@ -535,11 +535,11 @@ export async function placeOrder(userId: number, input: OrderInput, pin: string 
 }
 
 /** Places an order whose confirmation (PIN) has already been verified. */
-export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Actor, historical?: ExecutionContext): OrderDto {
-  const order = validateInput(input);
-  return transaction(() => {
+export async function placeOrderConfirmed(userId: number, input: OrderInput, actor: Actor, historical?: ExecutionContext): Promise<OrderDto> {
+  const order = await validateInput(input);
+  return await transaction(async () => {
     const now = nowIso();
-    const result = run(
+    const result = await run(
       `INSERT INTO orders (user_id, security_id, side, order_type, validity, quantity, limit_price, status, trading_date,
          created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)`,
@@ -555,7 +555,7 @@ export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Ac
       now,
     );
     const id = Number(result.lastInsertRowid);
-    audit({
+    await audit({
       actor,
       action: 'ORDER_PLACED',
       subjectUserId: userId,
@@ -571,13 +571,13 @@ export function placeOrderConfirmed(userId: number, input: OrderInput, actor: Ac
         lastPrice: toRupees(order.quote.last),
       },
     });
-    processNewOrder(get<OrderRow>('SELECT * FROM orders WHERE id = ?', id)!, order.quote, actor, historical);
+    await processNewOrder((await get<OrderRow>('SELECT * FROM orders WHERE id = ?', id))!, order.quote, actor, historical);
     return orderDtoById(id);
   });
 }
 
-function requireOpenOrder(orderId: number, userId: number | null): OrderRow {
-  const order = get<OrderRow>('SELECT * FROM orders WHERE id = ?', orderId);
+async function requireOpenOrder(orderId: number, userId: number | null): Promise<OrderRow> {
+  const order = await get<OrderRow>('SELECT * FROM orders WHERE id = ?', orderId);
   if (!order || (userId !== null && order.user_id !== userId)) throw notFound('Order not found');
   if (order.status !== 'OPEN') throw conflict(`Order is already ${order.status.toLowerCase()} and cannot be changed`);
   return order;
@@ -597,13 +597,13 @@ export async function modifyOrder(
   pin: string | undefined,
   actor: Actor,
 ): Promise<OrderDto> {
-  requireOpenOrder(orderId, userId);
+  await requireOpenOrder(orderId, userId);
   await verifyTransactionPin(userId, pin, actor, 'ORDER_MODIFY');
-  return transaction(() => {
-    const order = requireOpenOrder(orderId, userId);
+  return transaction(async () => {
+    const order = await requireOpenOrder(orderId, userId);
     const quote = getQuote(order.security_id)!;
     const orderType = changes.orderType ?? order.order_type;
-    const next = validateInput({
+    const next = await validateInput({
       symbol: quote.symbol,
       side: order.side,
       orderType,
@@ -622,17 +622,17 @@ export async function modifyOrder(
     const price = marketable ? quote.last : next.limitPrice!;
     if (order.side === 'BUY') {
       const value = next.quantity * price;
-      const required = value + calculateCharges('BUY', value).total;
-      const available = availableBalance(userId, order.id);
+      const required = value + (await calculateCharges('BUY', value)).total;
+      const available = await availableBalance(userId, order.id);
       if (available < required) {
         throw new AppError(422, 'INSUFFICIENT_FUNDS', `Insufficient funds: ${formatInr(required)} required, ${formatInr(Math.max(0, available))} available`);
       }
-    } else if (freeQuantity(userId, order.security_id, order.id) < next.quantity) {
+    } else if ((await freeQuantity(userId, order.security_id, order.id)) < next.quantity) {
       throw new AppError(422, 'INSUFFICIENT_HOLDINGS', 'You do not hold enough free shares for this quantity');
     }
 
     const before = { orderType: order.order_type, quantity: order.quantity, limitPrice: toRupeesOrNull(order.limit_price) };
-    run(
+    await run(
       'UPDATE orders SET order_type = ?, quantity = ?, limit_price = ?, updated_at = ? WHERE id = ?',
       next.orderType,
       next.quantity,
@@ -640,7 +640,7 @@ export async function modifyOrder(
       nowIso(),
       order.id,
     );
-    audit({
+    await audit({
       actor,
       action: 'ORDER_MODIFIED',
       subjectUserId: userId,
@@ -648,17 +648,17 @@ export async function modifyOrder(
       entityId: order.id,
       details: { before, after: { orderType: next.orderType, quantity: next.quantity, limitPrice: toRupeesOrNull(next.limitPrice) } },
     });
-    processNewOrder(get<OrderRow>('SELECT * FROM orders WHERE id = ?', order.id)!, quote, actor);
+    await processNewOrder((await get<OrderRow>('SELECT * FROM orders WHERE id = ?', order.id))!, quote, actor);
     return orderDtoById(order.id);
   });
 }
 
 /** Cancels an open order. Pass userId = null for administrative cancellation. */
-export function cancelOrder(orderId: number, userId: number | null, actor: Actor, reason = 'Cancelled by you'): OrderDto {
-  return transaction(() => {
-    const order = requireOpenOrder(orderId, userId);
+export async function cancelOrder(orderId: number, userId: number | null, actor: Actor, reason = 'Cancelled by you'): Promise<OrderDto> {
+  return await transaction(async () => {
+    const order = await requireOpenOrder(orderId, userId);
     const now = nowIso();
-    run(
+    await run(
       "UPDATE orders SET status = 'CANCELLED', status_reason = ?, blocked_amount = 0, cancelled_at = ?, updated_at = ? WHERE id = ?",
       reason,
       now,
@@ -666,18 +666,18 @@ export function cancelOrder(orderId: number, userId: number | null, actor: Actor
       order.id,
     );
     const symbol = getQuote(order.security_id)?.symbol ?? '';
-    notify(order.user_id, 'ORDER', 'Order cancelled', `${sideVerb(order.side)} ${order.quantity} ${symbol} — ${reason}.`, '/orders?tab=history');
-    audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
+    await notify(order.user_id, 'ORDER', 'Order cancelled', `${sideVerb(order.side)} ${order.quantity} ${symbol} — ${reason}.`, '/orders?tab=history');
+    await audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
     emitOrderUpdate(order.user_id, order.id);
     return orderDtoById(order.id);
   });
 }
 
 /** Executes resting limit orders whose price has been reached. Registered as a market tick listener. */
-export function matchOpenOrders(changed: LiveQuote[]): number {
+export async function matchOpenOrders(changed: LiveQuote[]): Promise<number> {
   if (changed.length === 0) return 0;
   const changedIds = new Set(changed.map((q) => q.securityId));
-  const candidates = all<OrderRow>("SELECT * FROM orders WHERE status = 'OPEN' AND order_type = 'LIMIT' ORDER BY id").filter(
+  const candidates = (await all<OrderRow>("SELECT * FROM orders WHERE status = 'OPEN' AND order_type = 'LIMIT' ORDER BY id")).filter(
     (order) => changedIds.has(order.security_id),
   );
   let executed = 0;
@@ -687,9 +687,9 @@ export function matchOpenOrders(changed: LiveQuote[]): number {
     const crossed = order.side === 'BUY' ? quote.last <= order.limit_price : quote.last >= order.limit_price;
     if (!crossed) continue;
     try {
-      transaction(() => {
-        const fresh = get<OrderRow>("SELECT * FROM orders WHERE id = ? AND status = 'OPEN'", order.id);
-        if (fresh && executeOrder(fresh, quote, fresh.limit_price!, SYSTEM_ACTOR)) executed++;
+      await transaction(async () => {
+        const fresh = await get<OrderRow>("SELECT * FROM orders WHERE id = ? AND status = 'OPEN'", order.id);
+        if (fresh && (await executeOrder(fresh, quote, fresh.limit_price!, SYSTEM_ACTOR))) executed++;
       });
     } catch (err) {
       console.error(`Failed to execute order ${order.id}`, err);
@@ -699,13 +699,13 @@ export function matchOpenOrders(changed: LiveQuote[]): number {
 }
 
 /** Expires DAY orders from previous sessions. Registered as a market rollover listener for the simulated market. */
-export function expireDayOrders(newDate: string): number {
+export async function expireDayOrders(newDate: string): Promise<number> {
   return expireOrders(
-    all<OrderRow & { symbol: string }>(
+    (await all<OrderRow & { symbol: string }>(
       `SELECT o.*, s.symbol FROM orders o JOIN securities s ON s.id = o.security_id
         WHERE o.status = 'OPEN' AND o.validity = 'DAY' AND o.trading_date < ?`,
       newDate,
-    ),
+    )),
   );
 }
 
@@ -713,28 +713,28 @@ export function expireDayOrders(newDate: string): number {
  * Expires DAY orders placed before a live session ended (ISO time). Orders placed after the close are
  * after-market orders and stay open for the next session.
  */
-export function expireDayOrdersPlacedBefore(sessionEnd: string): number {
+export async function expireDayOrdersPlacedBefore(sessionEnd: string): Promise<number> {
   return expireOrders(
-    all<OrderRow & { symbol: string }>(
+    (await all<OrderRow & { symbol: string }>(
       `SELECT o.*, s.symbol FROM orders o JOIN securities s ON s.id = o.security_id
         WHERE o.status = 'OPEN' AND o.validity = 'DAY' AND o.created_at < ?`,
       sessionEnd,
-    ),
+    )),
   );
 }
 
-function expireOrders(stale: (OrderRow & { symbol: string })[]): number {
+async function expireOrders(stale: (OrderRow & { symbol: string })[]): Promise<number> {
   for (const order of stale) {
-    transaction(() => {
+    await transaction(async () => {
       const now = nowIso();
-      run(
+      await run(
         "UPDATE orders SET status = 'EXPIRED', status_reason = ?, blocked_amount = 0, updated_at = ? WHERE id = ?",
         'Order expired at the end of the trading day',
         now,
         order.id,
       );
-      notify(order.user_id, 'ORDER', 'Order expired', `${sideVerb(order.side)} ${order.quantity} ${order.symbol} expired unexecuted at the end of the trading day.`, '/orders?tab=history');
-      audit({ actor: SYSTEM_ACTOR, action: 'ORDER_EXPIRED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id });
+      await notify(order.user_id, 'ORDER', 'Order expired', `${sideVerb(order.side)} ${order.quantity} ${order.symbol} expired unexecuted at the end of the trading day.`, '/orders?tab=history');
+      await audit({ actor: SYSTEM_ACTOR, action: 'ORDER_EXPIRED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id });
       emitOrderUpdate(order.user_id, order.id);
     });
   }
@@ -752,7 +752,7 @@ export interface OrderQuery {
   pageSize: number;
 }
 
-export function listOrders(query: OrderQuery): Page<OrderDto & { userId: number; userName: string }> {
+export async function listOrders(query: OrderQuery): Promise<Page<OrderDto & { userId: number; userName: string }>> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.userId) (where.push('o.user_id = ?'), params.push(query.userId));
@@ -763,8 +763,8 @@ export function listOrders(query: OrderQuery): Page<OrderDto & { userId: number;
   if (query.to) (where.push('o.created_at <= ?'), params.push(istDayEndIso(query.to)));
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const from = 'FROM orders o JOIN securities s ON s.id = o.security_id JOIN users u ON u.id = o.user_id';
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n ${from} ${clause}`, ...params)!.n;
-  const rows = all<OrderJoinRow & { full_name: string }>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n ${from} ${clause}`, ...params))!.n;
+  const rows = await all<OrderJoinRow & { full_name: string }>(
     `SELECT o.*, s.symbol, s.name, u.full_name ${from} ${clause} ORDER BY o.id DESC LIMIT ? OFFSET ?`,
     ...params,
     query.pageSize,
@@ -778,14 +778,14 @@ export function listOrders(query: OrderQuery): Page<OrderDto & { userId: number;
   );
 }
 
-export function getOrderDetail(orderId: number, userId: number | null) {
-  const row = loadOrder(orderId);
+export async function getOrderDetail(orderId: number, userId: number | null) {
+  const row = await loadOrder(orderId);
   if (!row || (userId !== null && row.user_id !== userId)) throw notFound('Order not found');
-  const trade = get<TradeJoinRow>(
+  const trade = await get<TradeJoinRow>(
     'SELECT t.*, s.symbol, s.name FROM trades t JOIN securities s ON s.id = t.security_id WHERE t.order_id = ?',
     orderId,
   );
-  const timeline = listAuditLogs({ entityType: 'ORDER', entityId: String(orderId), page: 1, pageSize: 50 }).items.map((entry) => ({
+  const timeline = (await listAuditLogs({ entityType: 'ORDER', entityId: String(orderId), page: 1, pageSize: 50 })).items.map((entry) => ({
     action: entry.action,
     createdAt: entry.createdAt,
     actorRole: entry.actorRole,
@@ -804,7 +804,7 @@ export interface TradeQuery {
   pageSize: number;
 }
 
-export function listTrades(query: TradeQuery): Page<TradeDto> & { totals: { buyValue: number; sellValue: number; charges: number; realizedPnl: number } } {
+export async function listTrades(query: TradeQuery): Promise<Page<TradeDto> & { totals: { buyValue: number; sellValue: number; charges: number; realizedPnl: number } }> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.userId) (where.push('t.user_id = ?'), params.push(query.userId));
@@ -814,13 +814,13 @@ export function listTrades(query: TradeQuery): Page<TradeDto> & { totals: { buyV
   if (query.to) (where.push('t.trading_date <= ?'), params.push(query.to));
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const from = 'FROM trades t JOIN securities s ON s.id = t.security_id';
-  const totals = get<{ n: number; buy: number | null; sell: number | null; charges: number | null; pnl: number | null }>(
+  const totals = (await get<{ n: number; buy: number | null; sell: number | null; charges: number | null; pnl: number | null }>(
     `SELECT COUNT(*) AS n, SUM(CASE WHEN t.side = 'BUY' THEN t.value END) AS buy,
             SUM(CASE WHEN t.side = 'SELL' THEN t.value END) AS sell, SUM(t.total_charges) AS charges,
             SUM(t.realized_pnl) AS pnl ${from} ${clause}`,
     ...params,
-  )!;
-  const rows = all<TradeJoinRow>(
+  ))!;
+  const rows = await all<TradeJoinRow>(
     `SELECT t.*, s.symbol, s.name ${from} ${clause} ORDER BY t.id DESC LIMIT ? OFFSET ?`,
     ...params,
     query.pageSize,

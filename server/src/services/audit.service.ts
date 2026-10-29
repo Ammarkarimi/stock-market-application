@@ -54,8 +54,8 @@ function computeHash(row: HashedFields): string {
 }
 
 /** Appends an entry to the hash-chained audit trail. */
-export function audit(input: AuditInput): void {
-  const previous = get<{ hash: string }>('SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1');
+export async function audit(input: AuditInput): Promise<void> {
+  const previous = await get<{ hash: string }>('SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1');
   const row: HashedFields = {
     actor_id: input.actor.userId,
     actor_role: input.actor.role,
@@ -69,7 +69,7 @@ export function audit(input: AuditInput): void {
     created_at: nowIso(),
     prev_hash: previous?.hash ?? GENESIS_HASH,
   };
-  run(
+  await run(
     `INSERT INTO audit_logs (actor_id, actor_role, subject_user_id, action, entity_type, entity_id, details,
        ip, user_agent, created_at, prev_hash, hash)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -118,7 +118,7 @@ export interface AuditQuery {
   pageSize: number;
 }
 
-export function listAuditLogs(query: AuditQuery): Page<AuditLogDto> {
+export async function listAuditLogs(query: AuditQuery): Promise<Page<AuditLogDto>> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.actorId) (where.push('a.actor_id = ?'), params.push(query.actorId));
@@ -134,8 +134,8 @@ export function listAuditLogs(query: AuditQuery): Page<AuditLogDto> {
     params.push(like, like, like);
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_logs a ${clause}`, ...params)?.n ?? 0;
-  const rows = all<AuditRow & { actor_name: string | null; subject_name: string | null }>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_logs a ${clause}`, ...params))?.n ?? 0;
+  const rows = await all<AuditRow & { actor_name: string | null; subject_name: string | null }>(
     `SELECT a.*, actor.full_name AS actor_name, subject.full_name AS subject_name
        FROM audit_logs a
        LEFT JOIN users actor ON actor.id = a.actor_id
@@ -170,8 +170,8 @@ export function listAuditLogs(query: AuditQuery): Page<AuditLogDto> {
   );
 }
 
-export function listAuditActions(): string[] {
-  return all<{ action: string }>('SELECT DISTINCT action FROM audit_logs ORDER BY action').map((r) => r.action);
+export async function listAuditActions(): Promise<string[]> {
+  return (await all<{ action: string }>('SELECT DISTINCT action FROM audit_logs ORDER BY action')).map((r) => r.action);
 }
 
 export interface ChainVerification {
@@ -182,10 +182,10 @@ export interface ChainVerification {
 }
 
 /** Recomputes every hash in order; any edited, removed or reordered entry breaks the chain. */
-export function verifyAuditChain(): ChainVerification {
+export async function verifyAuditChain(): Promise<ChainVerification> {
   let expectedPrev = GENESIS_HASH;
   let checked = 0;
-  for (const row of all<AuditRow>('SELECT * FROM audit_logs ORDER BY id')) {
+  for (const row of await all<AuditRow>('SELECT * FROM audit_logs ORDER BY id')) {
     if (row.prev_hash !== expectedPrev) {
       return { valid: false, checked, brokenAtId: row.id, reason: 'Previous-hash link does not match' };
     }

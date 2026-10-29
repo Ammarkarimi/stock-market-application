@@ -40,12 +40,12 @@ const router = Router();
 const reason = z.string().trim().min(3, 'Please give a reason').max(200);
 
 // ---- Overview ---------------------------------------------------------------------------------
-router.get('/overview', (_req, res) => {
-  res.json(getAdminOverview());
+router.get('/overview', async (_req, res) => {
+  res.json((await getAdminOverview()));
 });
 
 // ---- Users ------------------------------------------------------------------------------------
-router.get('/users', (req, res) => {
+router.get('/users', async (req, res) => {
   const query = parse(
     z.object({
       q: z.string().trim().max(80).optional(),
@@ -55,35 +55,35 @@ router.get('/users', (req, res) => {
     }),
     req.query,
   );
-  res.json(listUsers(query));
+  res.json((await listUsers(query)));
 });
 
-router.get('/users/:id', (req, res) => {
-  res.json(getUserDetail(parse(idParam(), req.params.id)));
+router.get('/users/:id', async (req, res) => {
+  res.json((await getUserDetail(parse(idParam(), req.params.id))));
 });
 
-router.post('/users/:id/status', (req, res) => {
+router.post('/users/:id/status', async (req, res) => {
   const body = parse(z.object({ status: z.enum(['ACTIVE', 'SUSPENDED']), reason }), req.body);
-  res.json({ user: setUserStatus(parse(idParam(), req.params.id), body.status, body.reason, actorFrom(req)) });
+  res.json({ user: (await setUserStatus(parse(idParam(), req.params.id), body.status, body.reason, actorFrom(req))) });
 });
 
-router.post('/users/:id/role', (req, res) => {
+router.post('/users/:id/role', async (req, res) => {
   const body = parse(z.object({ role: z.enum(['USER', 'ADMIN']) }), req.body);
-  res.json({ user: setUserRole(parse(idParam(), req.params.id), body.role, actorFrom(req)) });
+  res.json({ user: (await setUserRole(parse(idParam(), req.params.id), body.role, actorFrom(req))) });
 });
 
-router.post('/users/:id/unlock', (req, res) => {
-  res.json({ user: unlockUser(parse(idParam(), req.params.id), actorFrom(req)) });
+router.post('/users/:id/unlock', async (req, res) => {
+  res.json({ user: (await unlockUser(parse(idParam(), req.params.id), actorFrom(req))) });
 });
 
-router.post('/users/:id/revoke-sessions', (req, res) => {
-  res.json({ revoked: signOutUserEverywhere(parse(idParam(), req.params.id), actorFrom(req)) });
+router.post('/users/:id/revoke-sessions', async (req, res) => {
+  res.json({ revoked: (await signOutUserEverywhere(parse(idParam(), req.params.id), actorFrom(req))) });
 });
 
-router.post('/users/:id/funds-adjustment', (req, res) => {
+router.post('/users/:id/funds-adjustment', async (req, res) => {
   const body = parse(z.object({ direction: z.enum(['CREDIT', 'DEBIT']), amount: rupees(), reason }), req.body);
   const amount = toPaise(body.amount) * (body.direction === 'CREDIT' ? 1 : -1);
-  res.status(201).json({ entry: adjustFunds(parse(idParam(), req.params.id), amount, body.reason, actorFrom(req)) });
+  res.status(201).json({ entry: (await adjustFunds(parse(idParam(), req.params.id), amount, body.reason, actorFrom(req))) });
 });
 
 // ---- Securities -------------------------------------------------------------------------------
@@ -125,7 +125,7 @@ router.get('/securities', (req, res) => {
   res.json(listSecurities({ ...query, type: query.type as never }));
 });
 
-router.post('/securities', (req, res) => {
+router.post('/securities', async (req, res) => {
   const body = parse(
     z.object({
       ...securityFields,
@@ -135,22 +135,22 @@ router.post('/securities', (req, res) => {
     }),
     req.body,
   );
-  res.status(201).json({ security: createSecurity(body, actorFrom(req)) });
+  res.status(201).json({ security: (await createSecurity(body, actorFrom(req))) });
 });
 
-router.patch('/securities/:symbol', (req, res) => {
+router.patch('/securities/:symbol', async (req, res) => {
   const body = parse(z.object({ ...securityFields, name: securityFields.name.optional() }), req.body);
-  res.json({ security: updateSecurity(parse(symbolParam(), req.params.symbol), body, actorFrom(req)) });
+  res.json({ security: (await updateSecurity(parse(symbolParam(), req.params.symbol), body, actorFrom(req))) });
 });
 
-router.post('/securities/:symbol/trading-status', (req, res) => {
+router.post('/securities/:symbol/trading-status', async (req, res) => {
   const body = parse(z.object({ status: z.enum(['ACTIVE', 'HALTED']), reason }), req.body);
-  res.json({ security: setTradingStatus(parse(symbolParam(), req.params.symbol), body.status, body.reason, actorFrom(req)) });
+  res.json({ security: (await setTradingStatus(parse(symbolParam(), req.params.symbol), body.status, body.reason, actorFrom(req))) });
 });
 
-router.post('/securities/:symbol/price', (req, res) => {
+router.post('/securities/:symbol/price', async (req, res) => {
   const body = parse(z.object({ price: rupees() }), req.body);
-  res.json({ security: setSecurityPrice(parse(symbolParam(), req.params.symbol), body.price, actorFrom(req)) });
+  res.json({ security: (await setSecurityPrice(parse(symbolParam(), req.params.symbol), body.price, actorFrom(req))) });
 });
 
 // ---- IPOs -------------------------------------------------------------------------------------
@@ -192,47 +192,47 @@ function ipoPrices<T extends { priceBandLow?: number; priceBandHigh?: number }>(
   };
 }
 
-router.get('/ipos', (_req, res) => {
-  res.json({ ipos: listAllIposForAdmin() });
+router.get('/ipos', async (_req, res) => {
+  res.json({ ipos: (await listAllIposForAdmin()) });
 });
 
-router.post('/ipos', (req, res) => {
+router.post('/ipos', async (req, res) => {
   const body = parse(ipoSchema, req.body);
-  res.status(201).json({ ipo: createIpo(ipoPrices(body), actorFrom(req)) });
+  res.status(201).json({ ipo: (await createIpo(ipoPrices(body), actorFrom(req))) });
 });
 
-router.get('/ipos/:id', (req, res) => {
+router.get('/ipos/:id', async (req, res) => {
   const id = parse(idParam(), req.params.id);
-  res.json({ ipo: getIpo(id), applications: listIpoApplications(id) });
+  res.json({ ipo: (await getIpo(id)), applications: (await listIpoApplications(id)) });
 });
 
-router.patch('/ipos/:id', (req, res) => {
+router.patch('/ipos/:id', async (req, res) => {
   const body = parse(ipoSchema.omit({ symbol: true }).partial(), req.body);
-  res.json({ ipo: updateIpo(parse(idParam(), req.params.id), ipoPrices(body), actorFrom(req)) });
+  res.json({ ipo: (await updateIpo(parse(idParam(), req.params.id), ipoPrices(body), actorFrom(req))) });
 });
 
-router.post('/ipos/:id/subscription', (req, res) => {
+router.post('/ipos/:id/subscription', async (req, res) => {
   const body = parse(z.object({ retail: z.number().min(0).max(1000), nii: z.number().min(0).max(1000), qib: z.number().min(0).max(1000) }), req.body);
-  res.json({ ipo: setSubscription(parse(idParam(), req.params.id), body, actorFrom(req)) });
+  res.json({ ipo: (await setSubscription(parse(idParam(), req.params.id), body, actorFrom(req))) });
 });
 
-router.post('/ipos/:id/allot', (req, res) => {
+router.post('/ipos/:id/allot', async (req, res) => {
   const id = parse(idParam(), req.params.id);
-  res.json({ result: allotIpo(id, actorFrom(req)), ipo: getIpo(id) });
+  res.json({ result: (await allotIpo(id, actorFrom(req))), ipo: (await getIpo(id)) });
 });
 
-router.post('/ipos/:id/list', (req, res) => {
+router.post('/ipos/:id/list', async (req, res) => {
   const id = parse(idParam(), req.params.id);
-  res.json({ result: listIpo(id, actorFrom(req)), ipo: getIpo(id) });
+  res.json({ result: (await listIpo(id, actorFrom(req))), ipo: (await getIpo(id)) });
 });
 
-router.post('/ipos/:id/withdraw', (req, res) => {
+router.post('/ipos/:id/withdraw', async (req, res) => {
   const body = parse(z.object({ reason }), req.body);
-  res.json({ ipo: withdrawIpo(parse(idParam(), req.params.id), body.reason, actorFrom(req)) });
+  res.json({ ipo: (await withdrawIpo(parse(idParam(), req.params.id), body.reason, actorFrom(req))) });
 });
 
 // ---- Orders & transactions ------------------------------------------------------------------------
-router.get('/orders', (req, res) => {
+router.get('/orders', async (req, res) => {
   const query = parse(
     z.object({
       userId: idParam().optional(),
@@ -245,27 +245,27 @@ router.get('/orders', (req, res) => {
     }),
     req.query,
   );
-  res.json(listOrders({ ...query, status: query.status as never }));
+  res.json((await listOrders({ ...query, status: query.status as never })));
 });
 
-router.get('/orders/:id', (req, res) => {
-  res.json(getOrderDetail(parse(idParam(), req.params.id), null));
+router.get('/orders/:id', async (req, res) => {
+  res.json((await getOrderDetail(parse(idParam(), req.params.id), null)));
 });
 
-router.post('/orders/:id/cancel', (req, res) => {
+router.post('/orders/:id/cancel', async (req, res) => {
   const body = parse(z.object({ reason }), req.body);
-  res.json({ order: cancelOrder(parse(idParam(), req.params.id), null, actorFrom(req), `Cancelled by administrator: ${body.reason}`) });
+  res.json({ order: (await cancelOrder(parse(idParam(), req.params.id), null, actorFrom(req), `Cancelled by administrator: ${body.reason}`)) });
 });
 
-router.get('/trades', (req, res) => {
+router.get('/trades', async (req, res) => {
   const query = parse(
     z.object({ userId: idParam().optional(), symbol: symbolParam().optional(), side: z.enum(['BUY', 'SELL']).optional(), from: dateString().optional(), to: dateString().optional(), ...paginationQuery }),
     req.query,
   );
-  res.json(listTrades(query));
+  res.json((await listTrades(query)));
 });
 
-router.get('/ledger', (req, res) => {
+router.get('/ledger', async (req, res) => {
   const query = parse(
     z.object({
       userId: idParam().optional(),
@@ -276,16 +276,16 @@ router.get('/ledger', (req, res) => {
     }),
     req.query,
   );
-  res.json(listLedger({ ...query, type: query.type as never }));
+  res.json((await listLedger({ ...query, type: query.type as never })));
 });
 
-router.get('/fund-transactions', (req, res) => {
+router.get('/fund-transactions', async (req, res) => {
   const query = parse(z.object({ userId: idParam().optional(), type: z.enum(['DEPOSIT', 'WITHDRAWAL']).optional(), ...paginationQuery }), req.query);
-  res.json(listAllFundTransactions(query));
+  res.json((await listAllFundTransactions(query)));
 });
 
 // ---- Audit trail ----------------------------------------------------------------------------------
-router.get('/audit-logs', (req, res) => {
+router.get('/audit-logs', async (req, res) => {
   const query = parse(
     z.object({
       actorId: idParam().optional(),
@@ -300,29 +300,29 @@ router.get('/audit-logs', (req, res) => {
     }),
     req.query,
   );
-  res.json(listAuditLogs(query));
+  res.json((await listAuditLogs(query)));
 });
 
-router.get('/audit-logs/actions', (_req, res) => {
-  res.json({ actions: listAuditActions() });
+router.get('/audit-logs/actions', async (_req, res) => {
+  res.json({ actions: (await listAuditActions()) });
 });
 
-router.get('/audit-logs/verify', (_req, res) => {
-  res.json(verifyAuditChain());
+router.get('/audit-logs/verify', async (_req, res) => {
+  res.json((await verifyAuditChain()));
 });
 
 // ---- Settings & announcements -------------------------------------------------------------------
-router.get('/settings', (_req, res) => {
-  res.json({ settings: getAllSettings() });
+router.get('/settings', async (_req, res) => {
+  res.json({ settings: (await getAllSettings()) });
 });
 
-router.put('/settings/:key', (req, res) => {
+router.put('/settings/:key', async (req, res) => {
   const key = String(req.params.key);
   if (!isSettingKey(key)) throw badRequest(`Unknown setting "${key}"`);
-  res.json({ value: updateSetting(key, req.body, actorFrom(req)) });
+  res.json({ value: (await updateSetting(key, req.body, actorFrom(req))) });
 });
 
-router.post('/announcements', (req, res) => {
+router.post('/announcements', async (req, res) => {
   const body = parse(
     z.object({
       title: z.string().trim().min(3).max(80),
@@ -336,7 +336,7 @@ router.post('/announcements', (req, res) => {
     }),
     req.body,
   );
-  res.status(201).json(sendAnnouncement(body.title, body.message, body.link ?? null, actorFrom(req)));
+  res.status(201).json((await sendAnnouncement(body.title, body.message, body.link ?? null, actorFrom(req))));
 });
 
 export default router;

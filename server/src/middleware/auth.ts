@@ -19,10 +19,10 @@ export function clearSessionCookie(res: Response): void {
 }
 
 /** Attaches req.auth when the request carries a valid session cookie. */
-export function loadSession(req: Request, res: Response, next: NextFunction): void {
+export async function loadSession(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = req.cookies?.[SESSION_COOKIE] as string | undefined;
   if (token) {
-    const auth = resolveSession(token);
+    const auth = await resolveSession(token);
     if (auth) req.auth = auth;
     else clearSessionCookie(res);
   }

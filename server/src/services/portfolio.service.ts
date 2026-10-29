@@ -52,8 +52,8 @@ export interface PortfolioSummary {
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
-function holdingRows(userId: number, onlyOpen = true): HoldingRow[] {
-  return all<HoldingRow>(
+async function holdingRows(userId: number, onlyOpen = true): Promise<HoldingRow[]> {
+  return await all<HoldingRow>(
     `SELECT h.*, s.symbol, s.name, s.security_type, s.sector FROM holdings h JOIN securities s ON s.id = h.security_id
       WHERE h.user_id = ? ${onlyOpen ? 'AND h.quantity > 0' : ''} ORDER BY s.symbol`,
     userId,
@@ -61,8 +61,8 @@ function holdingRows(userId: number, onlyOpen = true): HoldingRow[] {
 }
 
 /** Holdings valued at live prices (amounts in paise until converted). */
-function valuedHoldings(userId: number) {
-  return holdingRows(userId).map((row) => {
+async function valuedHoldings(userId: number) {
+  return (await holdingRows(userId)).map((row) => {
     const quote = getQuote(row.security_id);
     const last = quote?.last ?? Math.round(row.invested / row.quantity);
     const prevClose = quote?.prevClose ?? last;
@@ -71,22 +71,24 @@ function valuedHoldings(userId: number) {
   });
 }
 
-export function getPortfolio(userId: number) {
-  const valued = valuedHoldings(userId);
+export async function getPortfolio(userId: number) {
+  const valued = await valuedHoldings(userId);
   const invested = valued.reduce((sum, h) => sum + h.row.invested, 0);
   const currentValue = valued.reduce((sum, h) => sum + h.value, 0);
   const dayPnl = valued.reduce((sum, h) => sum + h.dayChange, 0);
   const previousValue = currentValue - dayPnl;
   const realized =
-    get<{ total: number | null }>('SELECT SUM(realized_pnl) AS total FROM holdings WHERE user_id = ?', userId)?.total ?? 0;
+    (await get<{ total: number | null }>('SELECT SUM(realized_pnl) AS total FROM holdings WHERE user_id = ?', userId))?.total ?? 0;
 
+  const free = new Map<number, number>();
+  for (const { row } of valued) free.set(row.security_id, await freeQuantity(userId, row.security_id));
   const holdings: HoldingDto[] = valued.map(({ row, last, prevClose, value, dayChange }) => ({
     symbol: row.symbol,
     name: row.name,
     type: row.security_type,
     sector: row.sector,
     quantity: row.quantity,
-    freeQuantity: freeQuantity(userId, row.security_id),
+    freeQuantity: free.get(row.security_id)!,
     averagePrice: toRupees(Math.round(row.invested / row.quantity)),
     lastPrice: toRupees(last),
     prevClose: toRupees(prevClose),
@@ -133,8 +135,8 @@ export function getPortfolio(userId: number) {
   };
 }
 
-export function getPosition(userId: number, securityId: number) {
-  const row = get<{ quantity: number; invested: number; realized_pnl: number }>(
+export async function getPosition(userId: number, securityId: number) {
+  const row = await get<{ quantity: number; invested: number; realized_pnl: number }>(
     'SELECT quantity, invested, realized_pnl FROM holdings WHERE user_id = ? AND security_id = ?',
     userId,
     securityId,
@@ -145,7 +147,7 @@ export function getPosition(userId: number, securityId: number) {
   const value = row.quantity * last;
   return {
     quantity: row.quantity,
-    freeQuantity: freeQuantity(userId, securityId),
+    freeQuantity: (await freeQuantity(userId, securityId)),
     averagePrice: row.quantity ? toRupees(Math.round(row.invested / row.quantity)) : 0,
     invested: toRupees(row.invested),
     currentValue: toRupees(value),
@@ -169,8 +171,8 @@ interface PerformancePoint {
  * Rebuilds daily portfolio value by replaying the user's trades against closing prices, so the chart
  * reflects exactly what was held on each day.
  */
-export function getPerformance(userId: number, range: PerformanceRange) {
-  const trades = all<{ security_id: number; side: 'BUY' | 'SELL'; quantity: number; value: number; trading_date: string }>(
+export async function getPerformance(userId: number, range: PerformanceRange) {
+  const trades = await all<{ security_id: number; side: 'BUY' | 'SELL'; quantity: number; value: number; trading_date: string }>(
     'SELECT security_id, side, quantity, value, trading_date FROM trades WHERE user_id = ? ORDER BY trading_date, id',
     userId,
   );
@@ -182,12 +184,12 @@ export function getPerformance(userId: number, range: PerformanceRange) {
 
   const nifty = getQuoteBySymbol('NIFTY50');
   const calendar = nifty
-    ? all<{ date: string; close: number }>(
+    ? (await all<{ date: string; close: number }>(
         'SELECT date, close FROM price_history WHERE security_id = ? AND date >= ? AND date < ? ORDER BY date',
         nifty.securityId,
         start,
         today,
-      )
+      ))
     : [];
   const dates = calendar.map((row) => row.date);
   dates.push(today);
@@ -197,7 +199,7 @@ export function getPerformance(userId: number, range: PerformanceRange) {
   const securityIds = [...new Set(trades.map((t) => t.security_id))];
   const closes = new Map<number, Map<string, number>>();
   for (const id of securityIds) {
-    const rows = all<{ date: string; close: number }>(
+    const rows = await all<{ date: string; close: number }>(
       'SELECT date, close FROM price_history WHERE security_id = ? AND date >= ? ORDER BY date',
       id,
       addDays(start, -10),

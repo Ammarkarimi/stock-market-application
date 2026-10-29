@@ -86,7 +86,7 @@ let yahoo: FakeYahoo;
 let today: string;
 
 beforeAll(async () => {
-  setupMarket({ ipos: true });
+  await setupMarket({ ipos: true });
   today = currentTradingDate();
   yahoo = new FakeYahoo();
   yahoo.time = sessionTime(today, 15, 30);
@@ -106,7 +106,7 @@ async function fundedInvestor(amount = 500_000) {
   return { client, user };
 }
 
-const orderStatus = (id: number) => get<{ status: string }>('SELECT status FROM orders WHERE id = ?', id)!.status;
+const orderStatus = async (id: number) => (await get<{ status: string }>('SELECT status FROM orders WHERE id = ?', id))!.status;
 
 describe('live market data', () => {
   it('prices catalogue securities from the feed and replaces simulated history', async () => {
@@ -114,7 +114,7 @@ describe('live market data', () => {
     const reliance = getQuoteBySymbol('RELIANCE')!;
     expect(reliance).toMatchObject({ last: 117_800, prevClose: 120_770, tradingDate: today });
 
-    const history = all<{ date: string; close: number }>('SELECT date, close FROM price_history WHERE security_id = ? ORDER BY date', reliance.securityId);
+    const history = await all<{ date: string; close: number }>('SELECT date, close FROM price_history WHERE security_id = ? ORDER BY date', reliance.securityId);
     expect(history).toHaveLength(30);
     expect(history.every((row) => row.close === 117_800 && row.date < today)).toBe(true);
 
@@ -125,15 +125,15 @@ describe('live market data', () => {
     expect(detail.body).toMatchObject({ priceSource: 'live', quote: { lastPrice: 1178, prevClose: 1207.7 }, metrics: { eps: 50, pe: 23.56 } });
 
     // Companies listed through the IPO simulation are not on the exchange and keep simulated prices.
-    const simulated = get<{ symbol: string }>("SELECT symbol FROM securities WHERE symbol = 'ORBITAERO' OR listing_date >= ? LIMIT 1", addDays(today, -400));
+    const simulated = await get<{ symbol: string }>("SELECT symbol FROM securities WHERE symbol = 'ORBITAERO' OR listing_date >= ? LIMIT 1", addDays(today, -400));
     if (simulated) expect((await client.get(`/api/securities/${simulated.symbol}`)).body.priceSource).toBe('simulated');
 
-    expect(() => setSecurityPrice('RELIANCE', 1500, SYSTEM_ACTOR)).toThrow(/live market feed/);
+    await expect(setSecurityPrice('RELIANCE', 1500, SYSTEM_ACTOR)).rejects.toThrow(/live market feed/);
   });
 
   it('loads reported financials in the background', async () => {
     const reliance = getQuoteBySymbol('RELIANCE')!;
-    await vi.waitFor(() => expect(get('SELECT 1 FROM financials WHERE security_id = ?', reliance.securityId)).toBeTruthy(), { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await get('SELECT 1 FROM financials WHERE security_id = ?', reliance.securityId)).toBeTruthy(), { timeout: 10_000 });
     const { client } = await registerWithPin();
     const detail = await client.get('/api/securities/RELIANCE');
     expect(detail.body.financialsSource).toBe('reported');
@@ -172,9 +172,9 @@ describe('live market data', () => {
     expect(await refreshLiveQuotes()).toBe('OPEN');
     expect(isMarketOpen()).toBe(true);
     expect(currentTradingDate()).toBe(nextDay);
-    expect(orderStatus(amo.body.order.id)).toBe('EXECUTED');
+    expect(await orderStatus(amo.body.order.id)).toBe('EXECUTED');
     const infyId = getQuoteBySymbol('INFY')!.securityId;
-    expect(get('SELECT 1 FROM price_history WHERE security_id = ? AND date = ?', infyId, today)).toBeTruthy();
+    expect(await get('SELECT 1 FROM price_history WHERE security_id = ? AND date = ?', infyId, today)).toBeTruthy();
   });
 
   it('expires DAY orders placed during the session when it closes, but keeps after-market orders', async () => {
@@ -193,7 +193,7 @@ describe('live market data', () => {
     expect(amo.status).toBe(201);
 
     expect(await refreshLiveQuotes()).toBe('CLOSED');
-    expect(orderStatus(resting.body.order.id)).toBe('EXPIRED');
-    expect(orderStatus(amo.body.order.id)).toBe('OPEN');
+    expect(await orderStatus(resting.body.order.id)).toBe('EXPIRED');
+    expect(await orderStatus(amo.body.order.id)).toBe('OPEN');
   });
 });

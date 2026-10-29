@@ -12,6 +12,7 @@ import {
   circuitLimits,
   getQuote,
   getQuoteBySymbol,
+  loadQuotes,
   toQuoteDto,
   type LiveQuote,
   type QuoteDto,
@@ -53,28 +54,14 @@ interface SecurityRow {
   listing_date: string | null;
 }
 
-let sharesCache: Map<number, number> | null = null;
-
-function sharesOutstanding(securityId: number): number | null {
-  if (!sharesCache) {
-    sharesCache = new Map(
-      all<{ id: number; shares_outstanding: number | null }>('SELECT id, shares_outstanding FROM securities').map((r) => [
-        r.id,
-        r.shares_outstanding ?? 0,
-      ]),
-    );
-  }
-  return sharesCache.get(securityId) || null;
-}
-
-/** Call after securities are added or edited. */
-export function invalidateSecurityCache(): void {
-  sharesCache = null;
+/** Call after securities are added or edited: reference data such as shares outstanding is cached with the quotes. */
+export async function invalidateSecurityCache(): Promise<void> {
+  await loadQuotes();
 }
 
 /** Market capitalisation in ₹ crore at the live price. */
 function marketCapCr(q: LiveQuote): number | null {
-  const shares = sharesOutstanding(q.securityId);
+  const shares = q.sharesOutstanding;
   return shares ? Math.round(((shares * q.last) / 100 / 1e7) * 100) / 100 : null;
 }
 
@@ -172,13 +159,13 @@ export function requireQuote(symbol: string): LiveQuote {
   return quote;
 }
 
-function closeOnOrBefore(securityId: number, date: string): number | null {
+async function closeOnOrBefore(securityId: number, date: string): Promise<number | null> {
   return (
-    get<{ close: number }>(
+    (await get<{ close: number }>(
       'SELECT close FROM price_history WHERE security_id = ? AND date <= ? ORDER BY date DESC LIMIT 1',
       securityId,
       date,
-    )?.close ?? null
+    ))?.close ?? null
   );
 }
 
@@ -222,12 +209,12 @@ function syntheticFinancials(row: SecurityRow) {
 }
 
 /** The last five fiscal years as reported to the exchange (fetched from a live data provider). */
-function reportedFinancials(securityId: number) {
-  const rows = all<{ period_end: string; revenue_cr: number | null; net_profit_cr: number | null }>(
+async function reportedFinancials(securityId: number) {
+  const rows = (await all<{ period_end: string; revenue_cr: number | null; net_profit_cr: number | null }>(
     `SELECT period_end, revenue_cr, net_profit_cr FROM financials
       WHERE security_id = ? AND revenue_cr IS NOT NULL AND net_profit_cr IS NOT NULL ORDER BY period_end DESC LIMIT 5`,
     securityId,
-  ).reverse();
+  )).reverse();
   return rows.map((r) => ({
     // Indian companies name a fiscal year after the year in which it ends (FY26 ends in March 2026).
     year: `FY${r.period_end.slice(2, 4)}`,
@@ -293,34 +280,34 @@ export interface SecurityDetail {
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
-export function getSecurityDetail(symbol: string): SecurityDetail {
+export async function getSecurityDetail(symbol: string): Promise<SecurityDetail> {
   const quote = requireQuote(symbol);
-  const row = get<SecurityRow>('SELECT * FROM securities WHERE id = ?', quote.securityId)!;
+  const row = (await get<SecurityRow>('SELECT * FROM securities WHERE id = ?', quote.securityId))!;
   const today = istDate();
   const yearAgo = addDays(today, -365);
-  const range = get<{ high: number | null; low: number | null }>(
+  const range = await get<{ high: number | null; low: number | null }>(
     'SELECT MAX(high) AS high, MIN(low) AS low FROM price_history WHERE security_id = ? AND date >= ?',
     quote.securityId,
     yearAgo,
   );
-  const avgVolume = get<{ v: number | null }>(
+  const avgVolume = (await get<{ v: number | null }>(
     `SELECT AVG(volume) AS v FROM (SELECT volume FROM price_history WHERE security_id = ? ORDER BY date DESC LIMIT 20)`,
     quote.securityId,
-  )?.v;
+  ))?.v;
   const performance: Record<string, number | null> = {};
   for (const [label, days] of PERFORMANCE_PERIODS) {
-    const base = closeOnOrBefore(quote.securityId, addDays(today, -days));
+    const base = await closeOnOrBefore(quote.securityId, addDays(today, -days));
     performance[label] = base ? changePercent(quote.last, base) : null;
   }
   const { lower, upper } = circuitLimits(quote);
   const price = quote.last;
-  const memberOf = all<{ symbol: string; name: string; weight: number }>(
+  const memberOf = (await all<{ symbol: string; name: string; weight: number }>(
     `SELECT s.symbol, s.name, ic.weight FROM index_constituents ic JOIN securities s ON s.id = ic.index_id
       WHERE ic.security_id = ? ORDER BY s.name`,
     quote.securityId,
-  ).map((m) => ({ ...m, weight: round2(m.weight * 100) }));
+  )).map((m) => ({ ...m, weight: round2(m.weight * 100) }));
 
-  const reported = reportedFinancials(quote.securityId);
+  const reported = await reportedFinancials(quote.securityId);
   const financials = reported.length > 0 ? reported : syntheticFinancials(row);
   return {
     priceSource: isExternallyPriced(quote.securityId) ? 'live' : 'simulated',
@@ -347,7 +334,7 @@ export function getSecurityDetail(symbol: string): SecurityDetail {
       tradingStatus: row.trading_status,
     },
     metrics: {
-      marketCapCr: marketCapCr(quote),
+      marketCapCr: (await marketCapCr(quote)),
       pe: row.eps && row.eps > 0 ? round2(price / row.eps) : null,
       pb: row.book_value && row.book_value > 0 ? round2(price / row.book_value) : null,
       eps: toRupeesOrNull(row.eps),
@@ -430,14 +417,14 @@ function weekStart(date: string): string {
  * Price history for charts. Intraday ranges return epoch-second times; daily and weekly ranges return
  * YYYY-MM-DD dates. Daily ranges end with today's live candle.
  */
-export function getPriceHistory(symbol: string, range: HistoryRange): { symbol: string; range: HistoryRange; interval: string; candles: Candle[] } {
+export async function getPriceHistory(symbol: string, range: HistoryRange): Promise<{ symbol: string; range: HistoryRange; interval: string; candles: Candle[] }> {
   const quote = requireQuote(symbol);
   const id = quote.securityId;
   const tradingDate = currentTradingDate();
 
   if (range === '1D' || range === '1W') {
     const from = range === '1D' ? istDayStart(tradingDate) : nowMs() - 7 * 86_400_000;
-    const rows = all<CandleRow & { ts: number }>(
+    const rows = await all<CandleRow & { ts: number }>(
       'SELECT ts, open, high, low, close, volume FROM intraday_prices WHERE security_id = ? AND ts >= ? ORDER BY ts',
       id,
       from,
@@ -455,7 +442,7 @@ export function getPriceHistory(symbol: string, range: HistoryRange): { symbol: 
   }
 
   const days = { '1M': 31, '3M': 92, '6M': 183, '1Y': 366, '3Y': 1096, '5Y': 1827 }[range];
-  const rows = all<CandleRow & { date: string }>(
+  const rows = await all<CandleRow & { date: string }>(
     `SELECT date, open, high, low, close, volume FROM price_history
       WHERE security_id = ? AND date >= ? AND date < ? ORDER BY date`,
     id,
@@ -540,29 +527,42 @@ export interface IndexSummary extends QuoteDto {
   constituents: number;
 }
 
-export function getIndices(): IndexSummary[] {
+export async function getIndices(): Promise<IndexSummary[]> {
   const from = istDayStart(currentTradingDate());
   const indices = allQuotes()
     .filter((q) => q.type === 'INDEX')
     .sort((a, b) => a.securityId - b.securityId);
+  const ids = indices.map((q) => q.securityId);
+  // Two queries for all indices: today's intraday closes and constituent counts.
+  const closesById = new Map<number, number[]>();
+  for (const row of await all<{ security_id: number; close: number }>(
+    'SELECT security_id, close FROM intraday_prices WHERE security_id = ANY(?) AND ts >= ? ORDER BY security_id, ts',
+    ids,
+    from,
+  )) {
+    const list = closesById.get(row.security_id) ?? [];
+    list.push(toRupees(row.close));
+    closesById.set(row.security_id, list);
+  }
+  const counts = new Map(
+    (await all<{ index_id: number; n: number }>(
+      'SELECT index_id, COUNT(*) AS n FROM index_constituents WHERE index_id = ANY(?) GROUP BY index_id',
+      ids,
+    )).map((r) => [r.index_id, r.n]),
+  );
   return indices.map((q) => {
-    const closes = all<{ close: number }>(
-      'SELECT close FROM intraday_prices WHERE security_id = ? AND ts >= ? ORDER BY ts',
-      q.securityId,
-      from,
-    ).map((r) => toRupees(r.close));
+    const closes = closesById.get(q.securityId) ?? [];
     const step = Math.max(1, Math.ceil(closes.length / 60));
     const sparkline = closes.filter((_, i) => i % step === 0);
     sparkline.push(toRupees(q.last));
-    const constituents = get<{ n: number }>('SELECT COUNT(*) AS n FROM index_constituents WHERE index_id = ?', q.securityId)!.n;
-    return { ...toQuoteDto(q), sparkline, constituents };
+    return { ...toQuoteDto(q), sparkline, constituents: counts.get(q.securityId) ?? 0 };
   });
 }
 
-export function getIndexConstituents(symbol: string) {
+export async function getIndexConstituents(symbol: string) {
   const index = requireQuote(symbol);
   if (index.type !== 'INDEX') throw notFound(`${index.symbol} is not an index`);
-  const rows = all<{ security_id: number; weight: number }>(
+  const rows = await all<{ security_id: number; weight: number }>(
     'SELECT security_id, weight FROM index_constituents WHERE index_id = ? ORDER BY weight DESC',
     index.securityId,
   );
@@ -608,10 +608,10 @@ export function getMarketStatus() {
   };
 }
 
-export function getMarketOverview() {
+export async function getMarketOverview() {
   return {
     status: getMarketStatus(),
-    indices: getIndices(),
+    indices: (await getIndices()),
     breadth: getMarketBreadth(),
     gainers: getMovers('gainers', 5),
     losers: getMovers('losers', 5),

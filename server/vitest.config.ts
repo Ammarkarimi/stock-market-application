@@ -6,6 +6,8 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     env: { NODE_ENV: 'test' },
     pool: 'forks',
-    testTimeout: 20_000,
+    // Each test file starts its own PGlite (Postgres in WebAssembly) and seeds a year of market data.
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
 });

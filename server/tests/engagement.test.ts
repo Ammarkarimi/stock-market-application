@@ -58,7 +58,7 @@ describe('price alerts', () => {
     expect(created.status).toBe(201);
     expect(created.body.alert).toMatchObject({ status: 'ACTIVE', condition: 'ABOVE', targetPrice: target });
 
-    setPrice(titan.securityId, Math.round(target * 100) + 500);
+    await setPrice(titan.securityId, Math.round(target * 100) + 500);
     const alerts = (await client.get('/api/alerts')).body.alerts;
     expect(alerts[0].status).toBe('TRIGGERED');
     expect(alerts[0].triggeredPrice).toBeGreaterThanOrEqual(target);

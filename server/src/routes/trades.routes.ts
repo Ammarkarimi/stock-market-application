@@ -6,7 +6,7 @@ import { listTrades } from '../services/order.service.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const query = parse(
     z.object({
       symbol: symbolParam().optional(),
@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
     }),
     req.query,
   );
-  res.json(listTrades({ ...query, userId: currentUser(req).id }));
+  res.json((await listTrades({ ...query, userId: currentUser(req).id })));
 });
 
 export default router;

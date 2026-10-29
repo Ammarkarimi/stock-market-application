@@ -8,21 +8,21 @@ import { applyForIpo, cancelIpoApplication, getIpo, listIpos, listMyApplications
 
 const router = Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { status } = parse(z.object({ status: z.enum(['upcoming', 'open', 'closed', 'all']).default('all') }), req.query);
-  res.json({ ipos: listIpos(status, currentUser(req).id) });
+  res.json({ ipos: (await listIpos(status, currentUser(req).id)) });
 });
 
-router.get('/applications', (req, res) => {
-  res.json({ applications: listMyApplications(currentUser(req).id) });
+router.get('/applications', async (req, res) => {
+  res.json({ applications: (await listMyApplications(currentUser(req).id)) });
 });
 
-router.post('/applications/:id/cancel', (req, res) => {
-  res.json({ application: cancelIpoApplication(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req)) });
+router.post('/applications/:id/cancel', async (req, res) => {
+  res.json({ application: (await cancelIpoApplication(currentUser(req).id, parse(idParam(), req.params.id), actorFrom(req))) });
 });
 
-router.get('/:id', (req, res) => {
-  res.json({ ipo: getIpo(parse(idParam(), req.params.id), currentUser(req).id) });
+router.get('/:id', async (req, res) => {
+  res.json({ ipo: (await getIpo(parse(idParam(), req.params.id), currentUser(req).id)) });
 });
 
 router.post('/:id/apply', async (req, res) => {

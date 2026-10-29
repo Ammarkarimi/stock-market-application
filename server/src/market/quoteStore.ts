@@ -20,6 +20,7 @@ export interface LiveQuote {
   avgVolume: number;
   beta: number;
   underlyingSymbol: string | null;
+  sharesOutstanding: number | null;
   last: number;
   prevClose: number;
   open: number;
@@ -67,6 +68,7 @@ interface QuoteJoinRow {
   avg_volume: number;
   beta: number | null;
   underlying_symbol: string | null;
+  shares_outstanding: number | null;
   last_price: number;
   prev_close: number;
   open: number;
@@ -83,7 +85,7 @@ const bySymbol = new Map<string, LiveQuote>();
 
 const SELECT_QUOTES = `
   SELECT q.*, s.symbol, s.name, s.security_type, s.exchange, s.sector, s.industry, s.is_tradable, s.trading_status,
-         s.tick_size, s.circuit_pct, s.volatility, s.avg_volume, s.beta, s.underlying_symbol
+         s.tick_size, s.circuit_pct, s.volatility, s.avg_volume, s.beta, s.underlying_symbol, s.shares_outstanding
     FROM quotes q JOIN securities s ON s.id = q.security_id`;
 
 function fromRow(row: QuoteJoinRow): LiveQuote {
@@ -103,6 +105,7 @@ function fromRow(row: QuoteJoinRow): LiveQuote {
     avgVolume: row.avg_volume,
     beta: row.beta ?? 1,
     underlyingSymbol: row.underlying_symbol,
+    sharesOutstanding: row.shares_outstanding,
     last: row.last_price,
     prevClose: row.prev_close,
     open: row.open,
@@ -120,17 +123,17 @@ function index(quote: LiveQuote): void {
   bySymbol.set(quote.symbol.toUpperCase(), quote);
 }
 
-export function loadQuotes(): void {
+export async function loadQuotes(): Promise<void> {
   byId.clear();
   bySymbol.clear();
-  for (const row of all<QuoteJoinRow>(SELECT_QUOTES)) index(fromRow(row));
+  for (const row of await all<QuoteJoinRow>(SELECT_QUOTES)) index(fromRow(row));
 }
 
 /** Refreshes one security after reference data changed (admin edit, new listing). */
-export function reloadQuote(securityId: number): LiveQuote | undefined {
+export async function reloadQuote(securityId: number): Promise<LiveQuote | undefined> {
   const existing = byId.get(securityId);
   if (existing) bySymbol.delete(existing.symbol.toUpperCase());
-  const row = all<QuoteJoinRow>(`${SELECT_QUOTES} WHERE q.security_id = ?`, securityId)[0];
+  const row = (await all<QuoteJoinRow>(`${SELECT_QUOTES} WHERE q.security_id = ?`, securityId))[0];
   if (!row) {
     byId.delete(securityId);
     return undefined;
@@ -154,9 +157,9 @@ export function allQuotes(): LiveQuote[] {
   return [...byId.values()];
 }
 
-export function persistQuotes(quotes: LiveQuote[]): void {
+export async function persistQuotes(quotes: LiveQuote[]): Promise<void> {
   for (const q of quotes) {
-    run(
+    await run(
       `UPDATE quotes SET last_price = ?, prev_close = ?, open = ?, high = ?, low = ?, volume = ?, turnover = ?,
          trading_date = ?, updated_at = ? WHERE security_id = ?`,
       q.last,

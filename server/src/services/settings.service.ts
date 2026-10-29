@@ -56,17 +56,17 @@ export const DEFAULT_SETTINGS: Settings = {
   trading: { maxOrderQuantity: 100_000, ipoRetailLimit: 200_000 },
 };
 
-export function getSetting<K extends SettingKey>(key: K): Settings[K] {
-  const row = get<{ value: string }>('SELECT value FROM settings WHERE key = ?', key);
+export async function getSetting<K extends SettingKey>(key: K): Promise<Settings[K]> {
+  const row = await get<{ value: string }>('SELECT value FROM settings WHERE key = ?', key);
   if (!row) return DEFAULT_SETTINGS[key];
   return { ...DEFAULT_SETTINGS[key], ...(JSON.parse(row.value) as Partial<Settings[K]>) };
 }
 
-export function getAllSettings(): Settings {
+export async function getAllSettings(): Promise<Settings> {
   return {
-    charges: getSetting('charges'),
-    funds: getSetting('funds'),
-    trading: getSetting('trading'),
+    charges: (await getSetting('charges')),
+    funds: (await getSetting('funds')),
+    trading: (await getSetting('trading')),
   };
 }
 
@@ -74,11 +74,11 @@ export function isSettingKey(key: string): key is SettingKey {
   return key in schemas;
 }
 
-export function updateSetting<K extends SettingKey>(key: K, value: unknown, actor: Actor): Settings[K] {
-  const merged = { ...getSetting(key), ...(typeof value === 'object' && value ? value : {}) };
+export async function updateSetting<K extends SettingKey>(key: K, value: unknown, actor: Actor): Promise<Settings[K]> {
+  const merged = { ...(await getSetting(key)), ...(typeof value === 'object' && value ? value : {}) };
   const parsed = parse(schemas[key] as unknown as z.ZodType<Settings[K]>, merged);
-  const before = getSetting(key);
-  run(
+  const before = await getSetting(key);
+  await run(
     `INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at,
        updated_by = excluded.updated_by`,
@@ -87,7 +87,7 @@ export function updateSetting<K extends SettingKey>(key: K, value: unknown, acto
     nowIso(),
     actor.userId,
   );
-  audit({
+  await audit({
     actor,
     action: 'SETTINGS_UPDATED',
     subjectUserId: null,
@@ -99,12 +99,12 @@ export function updateSetting<K extends SettingKey>(key: K, value: unknown, acto
 }
 
 /** Internal key/value state (e.g. the current trading date) that is not user-editable. */
-export function getState(key: string): string | null {
-  return get<{ value: string }>('SELECT value FROM settings WHERE key = ?', `state:${key}`)?.value ?? null;
+export async function getState(key: string): Promise<string | null> {
+  return (await get<{ value: string }>('SELECT value FROM settings WHERE key = ?', `state:${key}`))?.value ?? null;
 }
 
-export function setState(key: string, value: string): void {
-  run(
+export async function setState(key: string, value: string): Promise<void> {
+  await run(
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     `state:${key}`,
