@@ -11,7 +11,14 @@ import { cleanupSessions } from '../services/session.service.js';
 import { claimLease } from '../services/settings.service.js';
 import { findUserByEmail } from '../services/user.repository.js';
 import { initMarket, reloadMarket, tick } from './engine.js';
-import { enableLiveFeed, liveFeedEnabled, liveHistoryDue, refreshLiveQuotes, syncLiveFundamentals, syncLiveHistory } from './liveFeed.js';
+import {
+  enableLiveFeed,
+  liveFeedEnabled,
+  liveHistoryDue,
+  refreshLiveQuotes,
+  syncLiveFundamentals,
+  syncLiveHistory,
+} from './liveFeed.js';
 import { seedIpos } from './seedIpos.js';
 import { seedMarket } from './seedMarket.js';
 import { isMarketOpen, loadMarketSession, marketSession } from './session.js';
@@ -30,6 +37,7 @@ const WORK_CHECK_MS = 1_000;
 const LIVE_CLOSED_POLL_MS = 2 * 60_000;
 const IPO_LIFECYCLE_MS = 30_000;
 const SESSION_CLEANUP_MS = 60 * 60_000;
+const ADMIN_CHECK_MS = 5 * 60_000;
 /** Long jobs hold their lease this long, so a crashed run is retried an hour later. */
 const LONG_JOB_LEASE_MS = 60 * 60_000;
 const LONG_JOB_CHECK_MS = 60_000;
@@ -57,8 +65,12 @@ async function prepare(): Promise<void> {
   if (config.seedDemoData) {
     await transaction(seedDemoData);
     if (!config.isProduction) {
-      console.log(`Demo investor: ${DEMO_ACCOUNTS.investor.email} / ${DEMO_ACCOUNTS.investor.password} (PIN ${DEMO_ACCOUNTS.investor.pin})`);
-      console.log(`Demo admin:    ${DEMO_ACCOUNTS.admin.email} / ${DEMO_ACCOUNTS.admin.password} (PIN ${DEMO_ACCOUNTS.admin.pin})`);
+      console.log(
+        `Demo investor: ${DEMO_ACCOUNTS.investor.email} / ${DEMO_ACCOUNTS.investor.password} (PIN ${DEMO_ACCOUNTS.investor.pin})`,
+      );
+      console.log(
+        `Demo admin:    ${DEMO_ACCOUNTS.admin.email} / ${DEMO_ACCOUNTS.admin.password} (PIN ${DEMO_ACCOUNTS.admin.pin})`,
+      );
     }
   }
   await promoteConfiguredAdmins();
@@ -119,7 +131,11 @@ export async function runDueWork(): Promise<void> {
     if (await claimLease('liveQuotes', interval)) await attempt('live quotes', refreshLiveQuotes);
   }
   // With a live feed, the simulator still prices securities the feed does not cover (IPO listings) while the market is open.
-  if (config.simulationEnabled && isMarketOpen() && (await claimLease('simulationTick', config.tickIntervalMs))) {
+  if (
+    config.simulationEnabled &&
+    isMarketOpen() &&
+    (await claimLease('simulationTick', config.tickIntervalMs))
+  ) {
     await attempt('market tick', () =>
       transaction(async () => {
         await reloadMarket();
@@ -128,15 +144,21 @@ export async function runDueWork(): Promise<void> {
     );
   }
   if (await claimLease('ipoLifecycle', IPO_LIFECYCLE_MS)) await attempt('IPO lifecycle', processIpoLifecycle);
-  if (await claimLease('sessionCleanup', SESSION_CLEANUP_MS)) await attempt('session cleanup', cleanupSessions);
+  if (await claimLease('sessionCleanup', SESSION_CLEANUP_MS))
+    await attempt('session cleanup', cleanupSessions);
+  // Accounts listed in ADMIN_EMAILS that registered after this instance started.
+  if (config.adminEmails.length > 0 && (await claimLease('adminEmails', ADMIN_CHECK_MS)))
+    await attempt('admin promotion', promoteConfiguredAdmins);
   syncedAt = nowMs();
 }
 
 /** History and company data from the feed: slow, so each runs at most about once a day. */
 export async function runLongJobs(): Promise<void> {
   if (!liveFeedEnabled()) return;
-  if ((await liveHistoryDue()) && (await claimLease('liveHistory', LONG_JOB_LEASE_MS))) await attempt('history sync', syncLiveHistory);
-  if (await claimLease('liveFundamentals', LONG_JOB_LEASE_MS)) await attempt('fundamentals sync', syncLiveFundamentals);
+  if ((await liveHistoryDue()) && (await claimLease('liveHistory', LONG_JOB_LEASE_MS)))
+    await attempt('history sync', syncLiveHistory);
+  if (await claimLease('liveFundamentals', LONG_JOB_LEASE_MS))
+    await attempt('fundamentals sync', syncLiveFundamentals);
 }
 
 /** Keeps a promise running after the response is sent; on Vercel the function stays alive until it settles. */

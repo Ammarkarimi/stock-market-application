@@ -120,7 +120,7 @@ The server reads environment variables, and `server/.env` when present (copy
 | `DATABASE_PATH` | `data/pglite` | PGlite data folder when there is no `DATABASE_URL`, relative to `server/`; `:memory:` for a throwaway database |
 | `DATABASE_POOL_SIZE` | `5` | Postgres connections per server instance |
 | `CRON_SECRET` | none | Token Vercel Cron sends to `/api/cron/daily`; the endpoint is disabled without it |
-| `ADMIN_EMAILS` | none | Comma-separated emails of existing accounts made admins when a server instance starts |
+| `ADMIN_EMAILS` | none | Comma-separated emails of accounts made admins (checked on startup and every five minutes) |
 | `SEED_DEMO_DATA` | `true`, but `false` in production | Create the demo accounts and history on first start. Their passwords are public, so only enable this for demos |
 | `COOKIE_SECURE` | `true` in production | Mark the session cookie `Secure` and send HSTS. Set to `false` only when serving plain HTTP |
 | `TRUST_PROXY` | `0` | Number of reverse-proxy hops to trust for the client IP |
@@ -166,7 +166,8 @@ audit trail see the client's IP.
 3. Add the environment variables `CRON_SECRET` (a long random string) and `TRUST_PROXY=1`.
 4. Deploy. The first request migrates and seeds the database, then real prices and history load in the
    background within a minute or two.
-5. Register your account on the site, add `ADMIN_EMAILS=you@example.com` and redeploy to make it an admin.
+5. Set `ADMIN_EMAILS=you@example.com`; once you register with that email, it becomes an admin within five minutes of
+   activity on the site (sign in again afterwards).
 
 There are no long-running processes on Vercel: each request keeps its instance's copy of the market fresh and
 starts any due background work (price updates, the IPO lifecycle, clean-up) after its response. Database leases
