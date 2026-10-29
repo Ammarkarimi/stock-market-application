@@ -84,7 +84,7 @@ function sessionInProgress(regular: { start: number; end: number } | undefined, 
 export const yahooProvider = createYahooProvider();
 
 /**
- * StockSphere is an Indian-market app: when the best matches include an NSE or BSE listing (for example
+ * StockKaro is an Indian-market app: when the best matches include an NSE or BSE listing (for example
  * INFY.NS next to the NYSE-listed INFY), list NSE first, then BSE, keeping the provider's order otherwise.
  */
 export function preferIndianListings(matches: SymbolMatch[]): SymbolMatch[] {

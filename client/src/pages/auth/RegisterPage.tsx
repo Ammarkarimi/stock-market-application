@@ -76,7 +76,7 @@ export default function RegisterPage() {
         <Input label="Confirm password" type="password" autoComplete="new-password" value={form.confirmPassword} onChange={set('confirmPassword')} error={errors.confirmPassword} required />
         <label className="flex items-start gap-2.5 text-sm text-muted">
           <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-          <span>I understand that StockSphere uses simulated market data and agree to the terms of use.</span>
+          <span>I understand that StockKaro is for paper trading with virtual money, and that its market data and chart analysis are for information only, not investment advice.</span>
         </label>
         <Button type="submit" size="lg" loading={submitting} disabled={!accepted || !form.fullName || !form.email || !form.password}>
           Create account

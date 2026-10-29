@@ -1,7 +1,7 @@
 services:
-  stocksphere:
+  stockkaro:
     build: .
-    image: stocksphere
+    image: stockkaro
     ports:
       - '4000:4000'
     environment:
@@ -10,8 +10,8 @@ services:
       # Plain HTTP on localhost. Set to true (the default in production) when serving over HTTPS.
       COOKIE_SECURE: 'false'
     volumes:
-      - stocksphere-data:/data
+      - stockkaro-data:/data
     restart: unless-stopped
 
 volumes:
-  stocksphere-data:
+  stockkaro-data:

@@ -37,7 +37,7 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthLayout title="Welcome back" subtitle="Sign in to your StockSphere account.">
+    <AuthLayout title="Welcome back" subtitle="Sign in to your StockKaro account.">
       <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
         {error && (
           <div role="alert" className="rounded-lg border border-loss/30 bg-loss-soft px-3 py-2.5 text-sm text-loss">
@@ -81,7 +81,7 @@ export default function LoginPage() {
       )}
 
       <p className="mt-8 text-center text-sm text-muted">
-        New to StockSphere?{' '}
+        New to StockKaro?{' '}
         <Link to="/register" className="font-medium text-primary hover:underline">
           Create an account
         </Link>

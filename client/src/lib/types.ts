@@ -160,7 +160,7 @@ export interface Position {
 
 export interface SecurityDetail {
   priceSource: 'live' | 'simulated';
-  /** Yahoo Finance ticker for the chart analyzer; null for companies that exist only in StockSphere. */
+  /** Yahoo Finance ticker for the chart analyzer; null for companies that exist only in StockKaro. */
   analysisSymbol: string | null;
   financialsSource: 'reported' | 'illustrative' | null;
   quote: Quote;

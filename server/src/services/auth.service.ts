@@ -67,7 +67,7 @@ export async function register(input: NewUserInput, actor: Actor): Promise<AuthR
     notify(
       userId,
       'SYSTEM',
-      'Welcome to StockSphere',
+      'Welcome to StockKaro',
       'Your account is ready. Add money and set a transaction PIN to start investing.',
       '/funds',
     );

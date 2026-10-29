@@ -549,9 +549,9 @@ export default function AnalyzePage() {
   });
 
   useEffect(() => {
-    document.title = analysis.data ? `${analysis.data.verdict.action === 'BUY' ? 'Buy' : analysis.data.verdict.action === 'AVOID' ? 'Avoid' : 'Wait'} · ${analysis.data.name} · Analyzer` : 'Chart analyzer · StockSphere';
+    document.title = analysis.data ? `${analysis.data.verdict.action === 'BUY' ? 'Buy' : analysis.data.verdict.action === 'AVOID' ? 'Avoid' : 'Wait'} · ${analysis.data.name} · Analyzer` : 'Chart analyzer · StockKaro';
     return () => {
-      document.title = 'StockSphere';
+      document.title = 'StockKaro';
     };
   }, [analysis.data]);
 

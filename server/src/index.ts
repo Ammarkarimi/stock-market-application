@@ -36,7 +36,7 @@ async function main() {
 
   const app = createApp();
   const server = app.listen(config.port, () => {
-    console.log(`StockSphere API listening on http://localhost:${config.port}`);
+    console.log(`StockKaro API listening on http://localhost:${config.port}`);
     if (config.seedDemoData && !config.isProduction) {
       console.log(`Demo investor: ${DEMO_ACCOUNTS.investor.email} / ${DEMO_ACCOUNTS.investor.password} (PIN ${DEMO_ACCOUNTS.investor.pin})`);
       console.log(`Demo admin:    ${DEMO_ACCOUNTS.admin.email} / ${DEMO_ACCOUNTS.admin.password} (PIN ${DEMO_ACCOUNTS.admin.pin})`);

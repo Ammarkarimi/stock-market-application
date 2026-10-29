@@ -57,7 +57,7 @@ async function createInvestor(input: { fullName: string; email: string; phone: s
   const pinHash = await hashSecret(input.pin);
   run('UPDATE users SET pin_hash = ? WHERE id = ?', pinHash, userId);
   audit({ actor: actorFor(userId), action: 'USER_REGISTERED', entityType: 'USER', entityId: userId, details: { email: input.email } });
-  notify(userId, 'SYSTEM', 'Welcome to StockSphere', 'Your account is ready. Add money and set a transaction PIN to start investing.', '/funds');
+  notify(userId, 'SYSTEM', 'Welcome to StockKaro', 'Your account is ready. Add money and set a transaction PIN to start investing.', '/funds');
   return userId;
 }
 

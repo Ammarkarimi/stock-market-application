@@ -41,7 +41,10 @@ export const config = {
   isProduction: env === 'production',
   isTest,
   port: num('PORT', 4000),
-  /** SQLite file, relative to server/. ':memory:' keeps everything in memory (nothing survives a restart). */
+  /**
+   * SQLite file, relative to server/. ':memory:' keeps everything in memory (nothing survives a restart). The default
+   * file keeps the product's earlier name so existing databases are still found.
+   */
   databasePath: isTest ? ':memory:' : resolveDatabasePath(process.env.DATABASE_PATH || 'data/stocksphere.db'),
   /** Session expires after this many minutes without any authenticated request. */
   sessionIdleMinutes: num('SESSION_IDLE_MINUTES', 120),

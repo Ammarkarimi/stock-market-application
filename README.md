@@ -1,4 +1,4 @@
-# StockSphere
+# StockKaro
 
 A full-stack stock market application where investors manage their investments: trade stocks and ETFs with
 market and limit orders, track a live portfolio, apply for IPOs, manage funds, set price alerts and follow
@@ -228,7 +228,7 @@ Errors use one shape: `{ "error": { "code": "…", "message": "…", "details": 
 
 ## Real trading
 
-StockSphere is a paper-trading platform. Taking real orders and real money in India requires a SEBI-registered
+StockKaro is a paper-trading platform. Taking real orders and real money in India requires a SEBI-registered
 stockbroker (with exchange memberships and a depository participant). The usual path for an app is to integrate a
 broker's API so users link their own trading and demat accounts and orders are placed through that broker, for
 example Zerodha Kite Connect, Upstox or Angel One SmartAPI. Funds would then stay with the broker; this app's wallet,

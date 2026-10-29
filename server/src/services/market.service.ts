@@ -243,7 +243,7 @@ const CATALOGUED_SYMBOLS = new Set([...STOCKS, ...FUNDS, ...INDICES].map((s) => 
 export interface SecurityDetail {
   /** Whether prices come from the exchange (via the live feed) or from the simulator. */
   priceSource: 'live' | 'simulated';
-  /** Yahoo Finance ticker for the chart analyzer, or null for companies that only exist in StockSphere (IPOs). */
+  /** Yahoo Finance ticker for the chart analyzer, or null for companies that only exist in StockKaro (IPOs). */
   analysisSymbol: string | null;
   /** Reported annual results, or illustrative figures derived from the reference data. */
   financialsSource: 'reported' | 'illustrative' | null;

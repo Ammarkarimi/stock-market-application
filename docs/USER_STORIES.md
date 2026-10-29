@@ -1,6 +1,6 @@
 # User Stories
 
-Minimal user stories for every feature of **StockSphere**, a stock market application for managing investments.
+Minimal user stories for every feature of **StockKaro**, a stock market application for managing investments.
 Each story has a short list of acceptance criteria (AC) that the implementation is checked against.
 
 **Roles**
@@ -239,7 +239,7 @@ As an investor, I want to view my own activity log, so that I can spot anything 
 ## Epic 15 — Chart analysis
 
 > The analyzer reads two years of real daily prices from Yahoo Finance for any listed stock, ETF or index, in India
-> or abroad, not only the stocks StockSphere trades. Its verdict is a rules-based technical signal for education, not
+> or abroad, not only the stocks StockKaro trades. Its verdict is a rules-based technical signal for education, not
 > investment advice.
 
 **US-36 Analyze a stock by name**

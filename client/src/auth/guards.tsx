@@ -8,7 +8,7 @@ import { useAuth } from './AuthProvider';
 function FullPageLoader() {
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <PageLoader label="Loading StockSphere…" />
+      <PageLoader label="Loading StockKaro…" />
     </div>
   );
 }

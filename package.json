@@ -1,8 +1,8 @@
 {
-  "name": "stocksphere",
+  "name": "stockkaro",
   "version": "1.0.0",
   "private": true,
-  "description": "StockSphere - a stock market application to manage investments, trade, apply for IPOs and track the market.",
+  "description": "StockKaro - a stock market application to manage investments, trade, apply for IPOs and track the market.",
   "license": "MIT",
   "workspaces": [
     "server",

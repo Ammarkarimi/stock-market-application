@@ -1,4 +1,4 @@
-/** Thin fetch wrapper for the StockSphere API: JSON in/out, CSRF header, typed errors. */
+/** Thin fetch wrapper for the StockKaro API: JSON in/out, CSRF header, typed errors. */
 
 export class ApiError extends Error {
   constructor(

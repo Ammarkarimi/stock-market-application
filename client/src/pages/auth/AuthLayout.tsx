@@ -21,7 +21,7 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
             <path d="M7 21l6-6 4 4 8-9" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
             <circle cx="25" cy="10" r="2" fill="#34d399" />
           </svg>
-          StockSphere
+          StockKaro
         </div>
         <div className="relative mt-auto max-w-lg">
           <h2 className="text-4xl font-semibold leading-tight tracking-tight">Invest with clarity. Trade with confidence.</h2>
