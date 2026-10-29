@@ -10,14 +10,15 @@ directories:
 asar: false
 # better-sqlite3 ships prebuilt Node-API binaries that work in Electron as they are.
 npmRebuild: false
-artifactName: StockKaro-${version}-${os}-${arch}.${ext}
+# File names carry no version, so .../releases/latest/download/<file> is a permanent download link.
+artifactName: StockKaro-${os}-${arch}.${ext}
 
 win:
   target:
     - target: nsis
       arch: [x64]
 nsis:
-  artifactName: StockKaro-Setup-${version}.${ext}
+  artifactName: StockKaro-Setup.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -32,10 +33,11 @@ mac:
   # Not signed with an Apple Developer ID yet: macOS asks users to confirm the first launch.
   identity: null
 dmg:
-  artifactName: StockKaro-${version}-mac-${arch}.${ext}
+  artifactName: StockKaro-mac-${arch}.${ext}
 
 linux:
   target: [AppImage, deb]
+  icon: resources/icons
   category: Office
   synopsis: Paper trading and chart analysis for the Indian stock market
   maintainer: Ammar Karimi <ammarkarimi.ai@gmail.com>
