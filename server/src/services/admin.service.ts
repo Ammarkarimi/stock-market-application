@@ -102,7 +102,7 @@ export async function listUsers(query: { q?: string; status?: 'ACTIVE' | 'SUSPEN
   const where: string[] = [];
   const params: unknown[] = [];
   if (query.q) {
-    where.push('(u.email LIKE ? OR u.full_name LIKE ? OR u.phone LIKE ?)');
+    where.push('(u.email ILIKE ? OR u.full_name ILIKE ? OR u.phone ILIKE ?)');
     const like = `%${query.q}%`;
     params.push(like, like, like);
   }

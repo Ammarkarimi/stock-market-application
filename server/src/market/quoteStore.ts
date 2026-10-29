@@ -1,4 +1,4 @@
-import { all, run } from '../db/index.js';
+import { all, insertMany } from '../db/index.js';
 import { changePercent, toRupees } from '../lib/money.js';
 
 export type SecurityType = 'STOCK' | 'ETF' | 'REIT' | 'INVIT' | 'INDEX';
@@ -123,10 +123,12 @@ function index(quote: LiveQuote): void {
   bySymbol.set(quote.symbol.toUpperCase(), quote);
 }
 
+/** Replaces the cached quotes with the stored ones; requests keep seeing the old cache until the query returns. */
 export async function loadQuotes(): Promise<void> {
+  const rows = await all<QuoteJoinRow>(SELECT_QUOTES);
   byId.clear();
   bySymbol.clear();
-  for (const row of await all<QuoteJoinRow>(SELECT_QUOTES)) index(fromRow(row));
+  for (const row of rows) index(fromRow(row));
 }
 
 /** Refreshes one security after reference data changed (admin edit, new listing). */
@@ -158,22 +160,18 @@ export function allQuotes(): LiveQuote[] {
 }
 
 export async function persistQuotes(quotes: LiveQuote[]): Promise<void> {
+  const rows = new Map<number, unknown[]>();
   for (const q of quotes) {
-    await run(
-      `UPDATE quotes SET last_price = ?, prev_close = ?, open = ?, high = ?, low = ?, volume = ?, turnover = ?,
-         trading_date = ?, updated_at = ? WHERE security_id = ?`,
-      q.last,
-      q.prevClose,
-      q.open,
-      q.high,
-      q.low,
-      q.volume,
-      q.turnover,
-      q.tradingDate,
-      new Date(q.updatedAt).toISOString(),
-      q.securityId,
-    );
+    rows.set(q.securityId, [q.securityId, q.last, q.prevClose, q.open, q.high, q.low, q.volume, q.turnover, q.tradingDate, new Date(q.updatedAt).toISOString()]);
   }
+  await insertMany(
+    'quotes',
+    ['security_id', 'last_price', 'prev_close', 'open', 'high', 'low', 'volume', 'turnover', 'trading_date', 'updated_at'],
+    [...rows.values()],
+    `ON CONFLICT(security_id) DO UPDATE SET last_price = excluded.last_price, prev_close = excluded.prev_close,
+       open = excluded.open, high = excluded.high, low = excluded.low, volume = excluded.volume, turnover = excluded.turnover,
+       trading_date = excluded.trading_date, updated_at = excluded.updated_at`,
+  );
 }
 
 /** Daily price band: orders and prices must stay within ±circuit% of the previous close. */

@@ -68,6 +68,13 @@ export const config = {
   /** Demo accounts have published passwords, so production only seeds them when explicitly asked to. */
   seedDemoData: bool('SEED_DEMO_DATA', !isTest && env !== 'production'),
   rateLimitEnabled: bool('RATE_LIMIT', !isTest),
+  /**
+   * Whether requests prepare the database and start the market's background work (price updates, IPO lifecycle,
+   * cleanup). Tests drive the market themselves.
+   */
+  marketRuntime: bool('MARKET_RUNTIME', !isTest),
+  /** Bearer token Vercel Cron sends to /api/cron/daily; without one the endpoint is disabled. */
+  cronSecret: process.env.CRON_SECRET || null,
   clientDistPath: path.resolve(serverRoot, '../client/dist'),
   timezone: 'Asia/Kolkata',
   serverRoot,

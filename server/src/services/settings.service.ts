@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { get, run } from '../db/index.js';
-import { nowIso } from '../lib/clock.js';
+import { nowIso, nowMs } from '../lib/clock.js';
 import { parse } from '../lib/validation.js';
 import type { Actor } from './actor.js';
 import { audit } from './audit.service.js';
@@ -111,4 +111,24 @@ export async function setState(key: string, value: string): Promise<void> {
     value,
     nowIso(),
   );
+}
+
+/**
+ * Claims a named lease for `intervalMs`: true for exactly one caller per interval, across every server instance.
+ * Background work started by requests uses it so that each job runs once, wherever the request landed.
+ */
+export async function claimLease(name: string, intervalMs: number): Promise<boolean> {
+  const now = nowMs();
+  const result = await run(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+     WHERE CAST(settings.value AS BIGINT) <= ? OR CAST(settings.value AS BIGINT) > ?`,
+    `lease:${name}`,
+    String(now),
+    nowIso(),
+    now - intervalMs,
+    // A lease from the future means the clock moved back (tests freeze time); treat it as expired.
+    now,
+  );
+  return result.changes > 0;
 }

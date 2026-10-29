@@ -1,3 +1,5 @@
+import { getState, setState } from '../services/settings.service.js';
+
 /** Where prices come from and whether the market is trading right now. */
 export type MarketSource = 'simulated' | 'yahoo';
 export type MarketPhase = 'OPEN' | 'PRE_OPEN' | 'CLOSED';
@@ -15,6 +17,8 @@ export interface MarketSessionState {
   lastError: string | null;
 }
 
+const STATE_KEY = 'marketSession';
+
 const state: MarketSessionState = {
   source: 'simulated',
   phase: 'OPEN',
@@ -30,6 +34,27 @@ export function marketSession(): Readonly<MarketSessionState> {
 
 export function updateMarketSession(patch: Partial<MarketSessionState>): void {
   Object.assign(state, patch);
+}
+
+/** Chooses this server's price source. A live feed starts closed until its first quotes arrive. */
+export function setMarketSource(source: MarketSource): void {
+  if (source === 'simulated') Object.assign(state, { source, phase: 'OPEN', delayMinutes: 0, asOf: null, lastError: null });
+  else Object.assign(state, { source, phase: 'CLOSED', delayMinutes: 15 });
+}
+
+/** Loads the session last reported by the feed, which any server instance may have updated. */
+export async function loadMarketSession(): Promise<void> {
+  if (state.source === 'simulated') return;
+  const saved = await getState(STATE_KEY);
+  if (!saved) return;
+  const { phase, delayMinutes, asOf, lastSessionEnd, lastError } = JSON.parse(saved) as Partial<MarketSessionState>;
+  Object.assign(state, { phase, delayMinutes, asOf, lastSessionEnd, lastError });
+}
+
+export async function saveMarketSession(): Promise<void> {
+  if (state.source === 'simulated') return;
+  const { phase, delayMinutes, asOf, lastSessionEnd, lastError } = state;
+  await setState(STATE_KEY, JSON.stringify({ phase, delayMinutes, asOf, lastSessionEnd, lastError }));
 }
 
 export function isLiveSource(): boolean {

@@ -1,8 +1,7 @@
-import { afterCommit, all, get, run } from '../db/index.js';
+import { all, get, run } from '../db/index.js';
 import { nowIso } from '../lib/clock.js';
 import { notFound } from '../lib/errors.js';
 import { pageOf, type Page } from '../lib/validation.js';
-import { emitToUser } from './events.js';
 
 export const NOTIFICATION_CATEGORIES = ['ORDER', 'IPO', 'PRICE_ALERT', 'FUNDS', 'SECURITY', 'SYSTEM'] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -89,7 +88,7 @@ export async function notify(
     isRead: false,
     createdAt,
   };
-  afterCommit(() => emitToUser(userId, 'notification', dto));
+  // Browsers polling /api/live pick up notifications by id; no separate event is needed.
   return dto;
 }
 
@@ -141,4 +140,19 @@ export async function notifyAllUsers(
   let delivered = 0;
   for (const user of users) if ((await notify(user.id, category, title, message, link))) delivered++;
   return delivered;
+}
+
+/** Notifications created after `afterId` (oldest first, at most `limit`), for browsers polling /api/live. */
+export async function notificationsAfter(userId: number, afterId: number, limit = 20): Promise<NotificationDto[]> {
+  const rows = await all<NotificationRow>(
+    'SELECT * FROM notifications WHERE user_id = ? AND id > ? ORDER BY id LIMIT ?',
+    userId,
+    afterId,
+    limit,
+  );
+  return rows.map(toDto);
+}
+
+export async function latestNotificationId(userId: number): Promise<number> {
+  return (await get<{ id: number | null }>('SELECT MAX(id) AS id FROM notifications WHERE user_id = ?', userId))?.id ?? 0;
 }

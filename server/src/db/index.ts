@@ -168,7 +168,8 @@ export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
       await outer.connection.query(`RELEASE SAVEPOINT ${name}`, []);
       return result;
     } catch (err) {
-      await outer.connection.query(`ROLLBACK TO SAVEPOINT ${name}`, []);
+      // If even the rollback fails, the original error is the one worth reporting.
+      await outer.connection.query(`ROLLBACK TO SAVEPOINT ${name}`, []).catch(() => {});
       throw err;
     }
   }

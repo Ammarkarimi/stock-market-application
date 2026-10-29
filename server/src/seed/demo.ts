@@ -173,14 +173,14 @@ export async function seedDemoData(): Promise<void> {
       await run(`UPDATE users SET date_of_birth = '1992-03-14', pan = 'ABCPV1234K', address = '12, Palm Grove Road, Indiranagar, Bengaluru 560038' WHERE id = ?`, demo);
       await saveBankAccount(demo, { accountHolder: 'Aditi Verma', accountNumber: '50100234567890', ifsc: 'HDFC0001234', bankName: 'HDFC Bank' }, actorFor(demo));
     }],
-    [150, 10, 20, () => void deposit(demo, toPaise(600_000), 'NETBANKING', actorFor(demo))],
+    [150, 10, 20, async () => void (await deposit(demo, toPaise(600_000), 'NETBANKING', actorFor(demo)))],
     [145, 10, 30, (date) => buyAll(demo, date, [['RELIANCE', 40], ['TCS', 15], ['HDFCBANK', 80], ['ITC', 250], ['INFY', 40]])],
     [120, 16, 0, async () => {
       rahul = await createInvestor({ fullName: 'Rahul Mehta', email: 'rahul@example.com', phone: '9812345678', password: 'Rahul@12345', pin: '4826' });
     }],
-    [110, 9, 45, () => void deposit(demo, toPaise(300_000), 'UPI', actorFor(demo))],
+    [110, 9, 45, async () => void (await deposit(demo, toPaise(300_000), 'UPI', actorFor(demo)))],
     [110, 11, 0, (date) => buyAll(demo, date, [['NIFTYBEES', 300], ['GOLDBEES', 500], ['BHARTIARTL', 30], ['SUNPHARMA', 25]])],
-    [90, 9, 50, () => void deposit(rahul, toPaise(200_000), 'NETBANKING', actorFor(rahul))],
+    [90, 9, 50, async () => void (await deposit(rahul, toPaise(200_000), 'NETBANKING', actorFor(rahul)))],
     [85, 10, 0, (date) => buyAll(rahul, date, [['TCS', 20], ['INFY', 30], ['HDFCBANK', 40]])],
     [80, 13, 0, (date) => buyAll(demo, date, [['TITAN', 10], ['LT', 15]])],
     [60, 14, 10, (date) => trade(demo, date, 'INFY', 'SELL', 20)],
@@ -191,13 +191,13 @@ export async function seedDemoData(): Promise<void> {
       quantumApp = await historicalApply(demo, 'QUANTUMMED', 1, 47);
     }],
     [44, 18, 0, () => historicalAllotment(quantumApp, false)],
-    [40, 11, 0, () => void deposit(priya, toPaise(250_000), 'UPI', actorFor(priya))],
+    [40, 11, 0, async () => void (await deposit(priya, toPaise(250_000), 'UPI', actorFor(priya)))],
     [38, 11, 30, (date) => buyAll(priya, date, [['ETERNAL', 300], ['NIFTYBEES', 200], ['TRENT', 5]])],
     [30, 15, 0, (date) => trade(rahul, date, 'TCS', 'SELL', 5)],
     [23, 11, 15, async () => {
       vistaarApp = await historicalApply(demo, 'VISTAARLOG', 1, 23);
     }],
-    [20, 10, 0, () => void deposit(demo, toPaise(200_000), 'UPI', actorFor(demo))],
+    [20, 10, 0, async () => void (await deposit(demo, toPaise(200_000), 'UPI', actorFor(demo)))],
     [20, 10, 30, (date) => buyAll(demo, date, [['BEL', 150], ['EMBASSY', 100]])],
     [20, 18, 0, () => historicalAllotment(vistaarApp, true)],
     [18, 9, 0, () => historicalListingCredit(vistaarApp)],
@@ -217,7 +217,7 @@ export async function seedDemoData(): Promise<void> {
       );
       await audit({ actor: actorFor(demo), action: 'ALERT_CREATED', entityType: 'ALERT', entityId: alertId, details: { symbol: 'INFY', condition: 'ABOVE' } });
     }],
-    [14, 9, 40, () => void deposit(rahul, toPaise(100_000), 'UPI', actorFor(rahul))],
+    [14, 9, 40, async () => void (await deposit(rahul, toPaise(100_000), 'UPI', actorFor(rahul)))],
     [12, 10, 15, (date) => trade(rahul, date, 'SBIN', 'BUY', 60)],
     [9, 13, 30, (date) => trade(priya, date, 'ETERNAL', 'SELL', 100)],
     [8, 11, 0, (date) => trade(rahul, date, 'TATASTEEL', 'BUY', 250)],
@@ -229,7 +229,7 @@ export async function seedDemoData(): Promise<void> {
       await notify(demo, 'PRICE_ALERT', 'INFY price alert', 'INFY has risen above your target price. Note: Book partial profits', '/stocks/INFY');
       await audit({ actor: SYSTEM_ACTOR, action: 'ALERT_TRIGGERED', subjectUserId: demo, entityType: 'ALERT', entityId: alertId, details: { symbol: 'INFY' } });
     }],
-    [7, 16, 0, () => void sendAnnouncement('Price alerts are live', 'Set above/below alerts on any stock and get notified the moment your price is hit.', '/alerts', admin())],
+    [7, 16, 0, async () => void (await sendAnnouncement('Price alerts are live', 'Set above/below alerts on any stock and get notified the moment your price is hit.', '/alerts', admin()))],
     [5, 11, 0, async () => {
       await applyForIpo(demo, (await ipoId('ORBITAERO')), { lots: 1, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
     }],
@@ -239,9 +239,9 @@ export async function seedDemoData(): Promise<void> {
     [3, 12, 0, async () => {
       await applyForIpo(demo, (await ipoId('KAVERIAGRO')), { lots: 2, cutoff: true }, DEMO_ACCOUNTS.investor.pin, actorFor(demo));
     }],
-    [2, 11, 0, () => void setUserStatus(karan, 'SUSPENDED', 'KYC documents could not be verified', admin())],
+    [2, 11, 0, async () => void (await setUserStatus(karan, 'SUSPENDED', 'KYC documents could not be verified', admin()))],
     [1, 11, 40, (date) => trade(demo, date, 'ICICIBANK', 'BUY', 30)],
-    [1, 18, 0, async () => void allotIpo((await ipoId('ORBITAERO')), SYSTEM_ACTOR, () => 0)],
+    [1, 18, 0, async () => void (await allotIpo((await ipoId('ORBITAERO')), SYSTEM_ACTOR, () => 0))],
   ];
   timeline.sort((a, b) => b[0] - a[0] || a[1] * 60 + a[2] - (b[1] * 60 + b[2]));
 

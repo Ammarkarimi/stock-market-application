@@ -349,9 +349,9 @@ export async function applyForIpo(
       entityId: id,
       details: { ipo: ipo.symbol, quantity, bidPrice: toRupees(bid), cutoff: input.cutoff, amount: toRupees(amount) },
     });
-    afterCommit(() => {
-      emitToUser(userId, 'ipo');
-      emitToUser(userId, 'funds');
+    afterCommit(async () => {
+      await emitToUser(userId, 'ipo');
+      await emitToUser(userId, 'funds');
     });
     return toApplicationDto((await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', id))!, ipo);
   });
@@ -371,9 +371,9 @@ export async function cancelIpoApplication(userId: number, applicationId: number
     );
     await notify(userId, 'IPO', 'IPO application cancelled', `Your application for ${ipo.company_name} was cancelled and ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
     await audit({ actor, action: 'IPO_APPLICATION_CANCELLED', subjectUserId: userId, entityType: 'IPO_APPLICATION', entityId: app.id, details: { ipo: ipo.symbol } });
-    afterCommit(() => {
-      emitToUser(userId, 'ipo');
-      emitToUser(userId, 'funds');
+    afterCommit(async () => {
+      await emitToUser(userId, 'ipo');
+      await emitToUser(userId, 'funds');
     });
     return toApplicationDto((await get<ApplicationRow>('SELECT * FROM ipo_applications WHERE id = ?', app.id))!, ipo);
   });
@@ -483,9 +483,9 @@ export function allotIpo(ipoId: number, actor: Actor, random: () => number = () 
         entityId: app.id,
         details: { ipo: ipo.symbol, allottedQuantity: lots * ipo.lot_size, issuePrice: toRupees(issuePrice) },
       });
-      afterCommit(() => {
-        emitToUser(app.user_id, 'ipo');
-        emitToUser(app.user_id, 'funds');
+      afterCommit(async () => {
+        await emitToUser(app.user_id, 'ipo');
+        await emitToUser(app.user_id, 'funds');
       });
     }
     await run('UPDATE ipos SET allotted_at = ?, issue_price = ?, updated_at = ? WHERE id = ?', nowIso(), issuePrice, nowIso(), ipoId);
@@ -641,9 +641,9 @@ export function listIpo(ipoId: number, actor: Actor) {
         `${ipo.symbol} listed at ${formatInr(listingPrice)} (${changePercent(listingPrice, issuePrice)}% vs issue price). ${app.allotted_quantity} shares were credited to your holdings.`,
         `/stocks/${encodeURIComponent(ipo.symbol)}`,
       );
-      afterCommit(() => {
-        emitToUser(app.user_id, 'portfolio');
-        emitToUser(app.user_id, 'ipo');
+      afterCommit(async () => {
+        await emitToUser(app.user_id, 'portfolio');
+        await emitToUser(app.user_id, 'ipo');
       });
     }
     await audit({
@@ -912,9 +912,9 @@ export async function withdrawIpo(ipoId: number, reason: string, actor: Actor): 
     for (const app of pending) {
       await run("UPDATE ipo_applications SET status = 'CANCELLED', status_reason = ?, updated_at = ? WHERE id = ?", `IPO withdrawn: ${reason}`, now, app.id);
       await notify(app.user_id, 'IPO', `${ipo.company_name} IPO withdrawn`, `The issue was withdrawn (${reason}). ${formatInr(app.blocked_amount)} has been released.`, `/ipo/${ipo.id}`);
-      afterCommit(() => {
-        emitToUser(app.user_id, 'ipo');
-        emitToUser(app.user_id, 'funds');
+      afterCommit(async () => {
+        await emitToUser(app.user_id, 'ipo');
+        await emitToUser(app.user_id, 'funds');
       });
     }
     await run('UPDATE ipos SET withdrawn_at = ?, updated_at = ? WHERE id = ?', now, now, ipoId);

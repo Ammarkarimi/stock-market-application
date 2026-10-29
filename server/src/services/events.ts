@@ -1,31 +1,33 @@
-import { EventEmitter } from 'node:events';
+import { all, get, run, transaction } from '../db/index.js';
 
-export type UserEventType =
-  | 'notification'
-  | 'order'
-  | 'funds'
-  | 'portfolio'
-  | 'ipo'
-  | 'alert'
-  | 'watchlist';
+export type UserEventType = 'order' | 'funds' | 'portfolio' | 'ipo' | 'alert' | 'watchlist';
 
-export interface UserEvent {
-  type: UserEventType;
-  payload?: unknown;
+/**
+ * Records that something changed for a user. Browsers polling /api/live compare versions and refresh the
+ * matching screens; versions come from one sequence, so they only ever grow.
+ */
+export async function emitToUser(userId: number, type: UserEventType): Promise<void> {
+  // Under the write lock, versions become visible in the order they were drawn, so a poll never skips one.
+  await transaction(() =>
+    run(
+      `INSERT INTO user_events (user_id, event_type, version) VALUES (?, ?, nextval('user_event_version'))
+       ON CONFLICT (user_id, event_type) DO UPDATE SET version = excluded.version`,
+      userId,
+      type,
+    ),
+  );
 }
 
-/** In-process pub/sub that feeds the Server-Sent Events stream. */
-export const bus = new EventEmitter();
-bus.setMaxListeners(0);
-
-export function emitToUser(userId: number, type: UserEventType, payload?: unknown): void {
-  bus.emit(`user:${userId}`, { type, payload } satisfies UserEvent);
+/** The user's event types that changed after `since`, with their latest versions. */
+export async function userEventsSince(userId: number, since: number): Promise<Record<string, number>> {
+  const rows = await all<{ event_type: string; version: number }>(
+    'SELECT event_type, version FROM user_events WHERE user_id = ? AND version > ?',
+    userId,
+    since,
+  );
+  return Object.fromEntries(rows.map((r) => [r.event_type, r.version]));
 }
 
-export function emitSessionRevoked(sessionId: string): void {
-  bus.emit('session-revoked', sessionId);
-}
-
-export function emitBroadcast(type: string, payload?: unknown): void {
-  bus.emit('broadcast', { type, payload });
+export async function latestUserEventVersion(userId: number): Promise<number> {
+  return (await get<{ v: number | null }>('SELECT MAX(version) AS v FROM user_events WHERE user_id = ?', userId))?.v ?? 0;
 }

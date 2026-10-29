@@ -129,7 +129,7 @@ export async function listAuditLogs(query: AuditQuery): Promise<Page<AuditLogDto
   if (query.from) (where.push('a.created_at >= ?'), params.push(istDayStartIso(query.from)));
   if (query.to) (where.push('a.created_at <= ?'), params.push(istDayEndIso(query.to)));
   if (query.search) {
-    where.push('(a.action LIKE ? OR a.details LIKE ? OR a.ip LIKE ?)');
+    where.push('(a.action ILIKE ? OR a.details ILIKE ? OR a.ip ILIKE ?)');
     const like = `%${query.search}%`;
     params.push(like, like, like);
   }

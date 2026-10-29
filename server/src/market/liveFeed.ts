@@ -1,30 +1,37 @@
-import { config } from '../config.js';
-import { all, run, transaction } from '../db/index.js';
+import { all, insertMany, run, transaction } from '../db/index.js';
 import { nowIso, nowMs } from '../lib/clock.js';
 import { istDate } from '../lib/time.js';
 import { invalidateSecurityCache } from '../services/market.service.js';
 import { expireDayOrdersPlacedBefore } from '../services/order.service.js';
-import { getState, setState } from '../services/settings.service.js';
+import { claimLease, getState, setState } from '../services/settings.service.js';
 import { FUNDS, INDICES, STOCKS } from './catalog.js';
 import {
   alignTradingDate,
   applyExternalQuotes,
   currentTradingDate,
+  reloadMarket,
   resetCurrentBars,
   setExternallyPriced,
   type ExternalQuote,
 } from './engine.js';
 import { getQuote } from './quoteStore.js';
 import { BAR_MS, tickSizeFor } from './seedMarket.js';
-import { marketSession, updateMarketSession, type MarketPhase } from './session.js';
+import {
+  loadMarketSession,
+  marketSession,
+  saveMarketSession,
+  setMarketSource,
+  updateMarketSession,
+  type MarketPhase,
+} from './session.js';
 import { BENCHMARK_TICKER, YahooFinance, yahooTicker, type YahooCandle, type YahooQuote } from './yahoo.js';
 
-/** Poll interval while the exchange is closed: just often enough to notice the next session. */
-const CLOSED_POLL_MS = 2 * 60_000;
-const FUNDAMENTALS_FROM_QUOTES_MS = 60 * 60_000;
 /** Fetch five years of history when the stored history is older than this; otherwise just the last month. */
 const FULL_HISTORY_AFTER_DAYS = 20;
 const CONCURRENCY = 6;
+const FUNDAMENTALS_FROM_QUOTES_MS = 60 * 60_000;
+/** How often the stored history is replaced with the exchange's. */
+const HISTORY_SYNC_MS = 20 * 60 * 60_000;
 
 interface LiveSecurity {
   id: number;
@@ -34,11 +41,8 @@ interface LiveSecurity {
 }
 
 let client = new YahooFinance();
-let securities: LiveSecurity[] = [];
-let timer: NodeJS.Timeout | null = null;
-let running = false;
-let fundamentalsFromQuotesAt = 0;
-let fundamentalsInFlight: Promise<void> | null = null;
+let securities: LiveSecurity[] | null = null;
+let enabled = false;
 
 const paise = (rupees: number) => Math.round(rupees * 100);
 
@@ -77,9 +81,8 @@ async function loadLiveSecurities(): Promise<LiveSecurity[]> {
     .map((row) => ({ id: row.id, symbol: row.symbol, type: row.security_type, ticker: yahooTicker(row.symbol) }));
 }
 
-/** Fetches every quote in one batch and applies it; returns the exchange's current phase. */
-async function refreshQuotes(): Promise<MarketPhase> {
-  const quotes = await client.quotes(securities.map((s) => s.ticker));
+/** Applies one batch of quotes from the feed; returns the exchange's current phase. */
+async function applyLiveQuotes(securities: LiveSecurity[], quotes: YahooQuote[]): Promise<MarketPhase> {
   const byTicker = new Map(quotes.map((q) => [q.symbol, q]));
   const benchmark = byTicker.get(BENCHMARK_TICKER);
   if (!benchmark?.regularMarketTime) throw new Error('the NIFTY 50 quote is missing from the response');
@@ -119,15 +122,12 @@ async function refreshQuotes(): Promise<MarketPhase> {
   // Outside the session, DAY orders placed before the close have expired; later ones wait for the next session.
   if (phase !== 'OPEN') await expireDayOrdersPlacedBefore(new Date(asOf).toISOString());
 
-  if (nowMs() - fundamentalsFromQuotesAt > FUNDAMENTALS_FROM_QUOTES_MS) {
-    await updateFundamentalsFromQuotes(byTicker);
-    fundamentalsFromQuotesAt = nowMs();
-  }
+  if (await claimLease('fundamentalsFromQuotes', FUNDAMENTALS_FROM_QUOTES_MS)) await updateFundamentalsFromQuotes(securities, byTicker);
   return phase;
 }
 
 /** Per-share figures and liquidity that come with every quote. */
-async function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): Promise<void> {
+async function updateFundamentalsFromQuotes(securities: LiveSecurity[], byTicker: Map<string, YahooQuote>): Promise<void> {
   await transaction(async () => {
     for (const security of securities) {
       const q = byTicker.get(security.ticker);
@@ -157,30 +157,30 @@ async function updateFundamentalsFromQuotes(byTicker: Map<string, YahooQuote>): 
   await invalidateSecurityCache();
 }
 
+function candleRow(securityId: number, key: string | number, c: YahooCandle): unknown[] {
+  const open = paise(c.open);
+  const close = paise(c.close);
+  return [securityId, key, open, Math.max(open, close, paise(c.high)), Math.min(open, close, paise(c.low)), close, c.volume];
+}
+
 async function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full: boolean): Promise<void> {
   const tradingDate = currentTradingDate();
-  const rows = candles.map((c) => ({ ...c, date: istDate(c.time * 1000) })).filter((c) => c.date < tradingDate);
+  const rows = new Map<string, YahooCandle>();
+  for (const c of candles) {
+    const date = istDate(c.time * 1000);
+    // The trading day itself lives in the quote.
+    if (date < tradingDate) rows.set(date, c);
+  }
+  const first = [...rows.keys()].sort()[0];
   await transaction(async () => {
     if (full) await run('DELETE FROM price_history WHERE security_id = ?', security.id);
-    else if (rows.length > 0) await run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, rows[0]!.date);
-    // The trading day itself lives in the quote.
+    else if (first) await run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, first);
     await run('DELETE FROM price_history WHERE security_id = ? AND date >= ?', security.id, tradingDate);
-    for (const c of rows) {
-      const open = paise(c.open);
-      const close = paise(c.close);
-      await run(
-        `INSERT INTO price_history (security_id, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(security_id, date) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low,
-           close = excluded.close, volume = excluded.volume`,
-        security.id,
-        c.date,
-        open,
-        Math.max(open, close, paise(c.high)),
-        Math.min(open, close, paise(c.low)),
-        close,
-        c.volume,
-      );
-    }
+    await insertMany(
+      'price_history',
+      ['security_id', 'date', 'open', 'high', 'low', 'close', 'volume'],
+      [...rows].map(([date, c]) => candleRow(security.id, date, c)),
+    );
   });
 }
 
@@ -191,25 +191,23 @@ async function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): Pr
   const first = Math.min(...bars.keys());
   await transaction(async () => {
     await run('DELETE FROM intraday_prices WHERE security_id = ? AND ts >= ?', security.id, first);
-    for (const [ts, c] of bars) {
-      const open = paise(c.open);
-      const close = paise(c.close);
-      await run(
-        'INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        security.id,
-        ts,
-        open,
-        Math.max(open, close, paise(c.high)),
-        Math.min(open, close, paise(c.low)),
-        close,
-        c.volume,
-      );
-    }
+    await insertMany(
+      'intraday_prices',
+      ['security_id', 'ts', 'open', 'high', 'low', 'close', 'volume'],
+      [...bars].map(([ts, c]) => candleRow(security.id, ts, c)),
+    );
   });
 }
 
+/** True when the stored history needs replacing with the exchange's (at most about once a day). */
+export async function liveHistoryDue(): Promise<boolean> {
+  const lastSync = await getState('liveHistorySyncedAt');
+  return !lastSync || nowMs() - Date.parse(lastSync) > HISTORY_SYNC_MS;
+}
+
 /** Replaces stored daily and five-minute history with the exchange's. */
-async function syncHistory(): Promise<void> {
+export async function syncLiveHistory(): Promise<void> {
+  const securities = await liveSecurities();
   const lastSync = await getState('liveHistorySyncedAt');
   const full = !lastSync || nowMs() - Date.parse(lastSync) > FULL_HISTORY_AFTER_DAYS * 86_400_000;
   const started = nowMs();
@@ -224,11 +222,11 @@ async function syncHistory(): Promise<void> {
   console.log(`Live market data: ${full ? 'five years' : 'one month'} of history for ${securities.length - failures} securities in ${Math.round((nowMs() - started) / 1000)}s`);
 }
 
-/** Company profile, ratios and annual results; refreshed once a day in the background. */
-async function syncFundamentals(): Promise<void> {
+/** Company profile, ratios and annual results; refreshed once a day. */
+export async function syncLiveFundamentals(): Promise<void> {
   const today = istDate();
   if ((await getState('liveFundamentalsSyncedOn')) === today) return;
-  const stocks = securities.filter((s) => s.type === 'STOCK');
+  const stocks = (await liveSecurities()).filter((s) => s.type === 'STOCK');
   const round2 = (v: number) => Math.round(v * 100) / 100;
   const crore = (v: number | null) => (v === null ? null : Math.round(v / 1e7));
   const failures = await eachLimited(stocks, 3, async (security) => {
@@ -271,60 +269,59 @@ async function syncFundamentals(): Promise<void> {
   console.log(`Live market data: fundamentals for ${stocks.length - failures} of ${stocks.length} companies`);
 }
 
-function refreshFundamentalsInBackground(): void {
-  if (fundamentalsInFlight) return;
-  fundamentalsInFlight = syncFundamentals()
-    .catch((err) => console.warn(`Live market data: fundamentals refresh failed: ${(err as Error).message}`))
-    .finally(() => {
-      fundamentalsInFlight = null;
-    });
-}
-
-async function poll(): Promise<void> {
-  timer = null;
-  if (!running) return;
-  try {
-    await refreshQuotes();
-  } catch (err) {
-    const message = (err as Error).message;
-    if (marketSession().lastError !== message) console.warn(`Live market data: quote refresh failed: ${message}`);
-    updateMarketSession({ lastError: message });
-  }
-  refreshFundamentalsInBackground();
-  if (running) timer = setTimeout(() => void poll(), marketSession().phase === 'OPEN' ? config.livePollMs : CLOSED_POLL_MS);
+/** The catalogue securities priced by the feed, loaded once per server instance. */
+async function liveSecurities(): Promise<LiveSecurity[]> {
+  securities ??= await loadLiveSecurities();
+  return securities;
 }
 
 /**
- * Switches the market to live prices: loads the latest quotes and real price history, then keeps quotes
- * current. Throws if the provider cannot be reached, so the caller can fall back to the simulator.
+ * Prices the catalogue's exchange-listed securities from the feed instead of the simulator. Nothing is fetched
+ * here: quotes arrive with refreshLiveQuotes(), which the market runtime calls while people use the site.
  */
-export async function startLiveFeed(provider: YahooFinance = new YahooFinance()): Promise<void> {
+export async function enableLiveFeed(provider: YahooFinance = new YahooFinance()): Promise<void> {
   client = provider;
-  securities = await loadLiveSecurities();
-  setExternallyPriced(securities.map((s) => s.id));
-  updateMarketSession({ source: 'yahoo', phase: 'CLOSED', delayMinutes: 15, lastError: null });
-  fundamentalsFromQuotesAt = 0;
+  securities = null;
+  setExternallyPriced((await liveSecurities()).map((s) => s.id));
+  setMarketSource('yahoo');
+  enabled = true;
+}
+
+export function liveFeedEnabled(): boolean {
+  return enabled;
+}
+
+/**
+ * Fetches the latest quotes and applies them: the trading date follows the exchange's session, and order
+ * matching and alerts react to the new prices. The network request runs outside any transaction.
+ * Returns the exchange's current phase; a failed refresh is recorded on the market session and rethrown.
+ */
+export async function refreshLiveQuotes(): Promise<MarketPhase> {
+  const securities = await liveSecurities();
+  let quotes: YahooQuote[];
   try {
-    await refreshQuotes();
+    quotes = await client.quotes(securities.map((s) => s.ticker));
   } catch (err) {
-    setExternallyPriced([]);
-    updateMarketSession({ source: 'simulated', phase: 'OPEN', delayMinutes: 0 });
+    await recordFailure(err as Error);
     throw err;
   }
-  await syncHistory();
-  running = true;
-  timer = setTimeout(() => void poll(), marketSession().phase === 'OPEN' ? config.livePollMs : CLOSED_POLL_MS);
-  refreshFundamentalsInBackground();
+  try {
+    return await transaction(async () => {
+      // Another server instance may have moved the market since this one last looked.
+      await reloadMarket();
+      await loadMarketSession();
+      const phase = await applyLiveQuotes(securities, quotes);
+      await saveMarketSession();
+      return phase;
+    });
+  } catch (err) {
+    await recordFailure(err as Error);
+    throw err;
+  }
 }
 
-export async function stopLiveFeed(): Promise<void> {
-  running = false;
-  if (timer) clearTimeout(timer);
-  timer = null;
-  await fundamentalsInFlight;
-}
-
-/** Runs one quote refresh immediately (tests and admin tooling). */
-export async function refreshLiveQuotes(): Promise<MarketPhase> {
-  return refreshQuotes();
+async function recordFailure(err: Error): Promise<void> {
+  if (marketSession().lastError !== err.message) console.warn(`Live market data: quote refresh failed: ${err.message}`);
+  updateMarketSession({ lastError: err.message });
+  await saveMarketSession().catch(() => {});
 }

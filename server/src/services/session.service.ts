@@ -4,7 +4,6 @@ import { nowIso, nowMs } from '../lib/clock.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
 import { describeUserAgent } from '../lib/userAgent.js';
 import type { Actor } from './actor.js';
-import { emitSessionRevoked } from './events.js';
 import { findUserById, type UserRow } from './user.repository.js';
 
 export const SESSION_COOKIE = 'ss_session';
@@ -105,7 +104,7 @@ export async function revokeSession(sessionId: string, reason: string): Promise<
       reason,
       sessionId,
     )).changes > 0;
-  if (changed) emitSessionRevoked(sessionId);
+  // The session's next request (including the browser's live poll) gets a 401 and signs out.
   return changed;
 }
 

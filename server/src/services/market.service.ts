@@ -6,7 +6,7 @@ import { changePercent, toRupees, toRupeesOrNull } from '../lib/money.js';
 import { createRng, hashString } from '../lib/rng.js';
 import { addDays, istDate, istDayStart } from '../lib/time.js';
 import { pageOf, type Page } from '../lib/validation.js';
-import { currentTradingDate, isExternallyPriced, isSimulationRunning } from '../market/engine.js';
+import { currentTradingDate, isExternallyPriced } from '../market/engine.js';
 import {
   allQuotes,
   circuitLimits,
@@ -334,7 +334,7 @@ export async function getSecurityDetail(symbol: string): Promise<SecurityDetail>
       tradingStatus: row.trading_status,
     },
     metrics: {
-      marketCapCr: (await marketCapCr(quote)),
+      marketCapCr: marketCapCr(quote),
       pe: row.eps && row.eps > 0 ? round2(price / row.eps) : null,
       pb: row.book_value && row.book_value > 0 ? round2(price / row.book_value) : null,
       eps: toRupeesOrNull(row.eps),
@@ -601,7 +601,7 @@ export function getMarketStatus() {
     delayMinutes: session.delayMinutes,
     asOf: session.asOf ? new Date(session.asOf).toISOString() : null,
     feedError: session.lastError,
-    live: simulated ? isSimulationRunning() : session.lastError === null,
+    live: simulated ? config.simulationEnabled : session.lastError === null,
     tradingDate: currentTradingDate(),
     tickIntervalMs: simulated ? config.tickIntervalMs : config.livePollMs,
     serverTime: nowIso(),

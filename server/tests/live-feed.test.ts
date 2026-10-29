@@ -1,10 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { all, get } from '../src/db/index.js';
 import { freezeTime, resetTime } from '../src/lib/clock.js';
 import { addDays, istDayStart } from '../src/lib/time.js';
 import { currentTradingDate } from '../src/market/engine.js';
-import { refreshLiveQuotes, startLiveFeed, stopLiveFeed } from '../src/market/liveFeed.js';
+import { enableLiveFeed, refreshLiveQuotes } from '../src/market/liveFeed.js';
 import { allQuotes, getQuoteBySymbol } from '../src/market/quoteStore.js';
+import { runDueWork, runLongJobs } from '../src/market/runtime.js';
 import { isMarketOpen, marketSession } from '../src/market/session.js';
 import {
   YahooFinance,
@@ -92,11 +93,13 @@ beforeAll(async () => {
   yahoo.time = sessionTime(today, 15, 30);
   yahoo.prices.set('RELIANCE.NS', 1178);
   yahoo.prevCloses.set('RELIANCE.NS', 1207.7);
-  await startLiveFeed(yahoo);
+  await enableLiveFeed(yahoo);
+  // What the first visitor's request starts in the background: quotes first, then history and company data.
+  await runDueWork();
+  await runLongJobs();
 });
 
-afterAll(async () => {
-  await stopLiveFeed();
+afterAll(() => {
   resetTime();
 });
 
@@ -131,9 +134,9 @@ describe('live market data', () => {
     await expect(setSecurityPrice('RELIANCE', 1500, SYSTEM_ACTOR)).rejects.toThrow(/live market feed/);
   });
 
-  it('loads reported financials in the background', async () => {
+  it('loads reported financials', async () => {
     const reliance = getQuoteBySymbol('RELIANCE')!;
-    await vi.waitFor(async () => expect(await get('SELECT 1 FROM financials WHERE security_id = ?', reliance.securityId)).toBeTruthy(), { timeout: 10_000 });
+    expect(await get('SELECT 1 FROM financials WHERE security_id = ?', reliance.securityId)).toBeTruthy();
     const { client } = await registerWithPin();
     const detail = await client.get('/api/securities/RELIANCE');
     expect(detail.body.financialsSource).toBe('reported');

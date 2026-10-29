@@ -1,9 +1,8 @@
 import { config } from '../config.js';
-import { all, run, transaction } from '../db/index.js';
+import { all, insertMany, run, transaction } from '../db/index.js';
 import { nowMs } from '../lib/clock.js';
 import { gaussian } from '../lib/rng.js';
 import { DAY_MS, istDate } from '../lib/time.js';
-import { bus } from '../services/events.js';
 import { getState, setState } from '../services/settings.service.js';
 import {
   allQuotes,
@@ -12,7 +11,6 @@ import {
   getQuoteBySymbol,
   loadQuotes,
   persistQuotes,
-  toTickTuple,
   type LiveQuote,
 } from './quoteStore.js';
 import { BAR_MS } from './seedMarket.js';
@@ -41,8 +39,8 @@ interface IndexComponent {
   basePrice: number;
 }
 
-type TickListener = (changed: LiveQuote[]) => void;
-type RolloverListener = (previousDate: string, newDate: string) => void;
+type TickListener = (changed: LiveQuote[]) => Promise<void> | void;
+type RolloverListener = (previousDate: string, newDate: string) => Promise<void> | void;
 
 const TRADING_DAYS_PER_YEAR = 252;
 /** Time constant of the short-term deviation (8 minutes). */
@@ -54,7 +52,6 @@ const trackingRatio = new Map<number, number>();
 const currentBars = new Map<number, Bar>();
 let indexComponents = new Map<number, IndexComponent[]>();
 let tradingDate = '';
-let timer: NodeJS.Timeout | null = null;
 /** Securities priced by an external feed instead of the simulator. */
 const externalIds = new Set<number>();
 const tickListeners: TickListener[] = [];
@@ -158,13 +155,34 @@ export async function initMarket(): Promise<void> {
   }
   refreshTrackingRatios();
   tradingDate = (await getState('tradingDate')) ?? allQuotes()[0]?.tradingDate ?? istDate();
+  await loadCurrentBars();
+  newDayDrifts();
+  // A live feed moves the trading date itself when the exchange opens a new session.
+  if (!isLiveSource() && tradingDate < istDate()) await rollover(istDate());
+}
+
+/** Loads the five-minute bars in progress, which another server instance may have been building. */
+async function loadCurrentBars(): Promise<void> {
+  currentBars.clear();
   const bucket = Math.floor(nowMs() / BAR_MS) * BAR_MS;
   for (const bar of await all<Bar & { security_id: number }>('SELECT * FROM intraday_prices WHERE ts = ?', bucket)) {
     currentBars.set(bar.security_id, { ts: bar.ts, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume });
   }
-  newDayDrifts();
-  // A live feed moves the trading date itself when the exchange opens a new session.
-  if (!isLiveSource() && tradingDate < istDate()) await rollover(istDate());
+}
+
+/**
+ * Reloads the market state that any server instance may have changed: quotes, the trading date and the bars in
+ * progress. Simulation state and index weights stay with this instance.
+ */
+export async function reloadMarket(): Promise<void> {
+  await loadQuotes();
+  tradingDate = (await getState('tradingDate')) ?? allQuotes()[0]?.tradingDate ?? istDate();
+  await loadCurrentBars();
+  if (indexComponents.size === 0) await loadIndexComponents();
+  for (const q of allQuotes()) {
+    if (isPrimary(q) && !priceState.has(q.securityId)) resetState(q);
+  }
+  if (trackingRatio.size === 0) refreshTrackingRatios();
 }
 
 function refreshTrackingRatios(): void {
@@ -175,14 +193,18 @@ function refreshTrackingRatios(): void {
   }
 }
 
-/** Adds a simulated or user trade to a security's day volume and current bar. */
-export function recordTradeVolume(securityId: number, quantity: number, price: number): void {
+/** Adds a user's trade to a security's day volume and current bar. */
+export async function recordTradeVolume(securityId: number, quantity: number, price: number): Promise<void> {
   const q = getQuote(securityId);
   if (!q) return;
   q.volume += quantity;
   q.turnover += quantity * price;
+  await run('UPDATE quotes SET volume = volume + ?, turnover = turnover + ? WHERE security_id = ?', quantity, quantity * price, securityId);
   const bar = currentBars.get(securityId);
-  if (bar) bar.volume += quantity;
+  if (bar) {
+    bar.volume += quantity;
+    await run('UPDATE intraday_prices SET volume = volume + ? WHERE security_id = ? AND ts = ?', quantity, securityId, bar.ts);
+  }
 }
 
 function updateBar(q: LiveQuote, at: number, volumeDelta: number): void {
@@ -199,22 +221,18 @@ function updateBar(q: LiveQuote, at: number, volumeDelta: number): void {
 }
 
 async function persistBars(quotes: LiveQuote[]): Promise<void> {
+  const rows = new Map<number, unknown[]>();
   for (const q of quotes) {
     const bar = currentBars.get(q.securityId);
-    if (!bar) continue;
-    await run(
-      `INSERT INTO intraday_prices (security_id, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(security_id, ts) DO UPDATE SET high = excluded.high, low = excluded.low, close = excluded.close,
-         volume = excluded.volume`,
-      q.securityId,
-      bar.ts,
-      bar.open,
-      bar.high,
-      bar.low,
-      bar.close,
-      bar.volume,
-    );
+    if (bar) rows.set(q.securityId, [q.securityId, bar.ts, bar.open, bar.high, bar.low, bar.close, bar.volume]);
   }
+  await insertMany(
+    'intraday_prices',
+    ['security_id', 'ts', 'open', 'high', 'low', 'close', 'volume'],
+    [...rows.values()],
+    `ON CONFLICT(security_id, ts) DO UPDATE SET high = excluded.high, low = excluded.low, close = excluded.close,
+       volume = excluded.volume`,
+  );
 }
 
 function applyPrice(q: LiveQuote, price: number, at: number): void {
@@ -254,19 +272,13 @@ function simulatedVolume(q: LiveQuote): number {
   return Math.floor(expected + Math.random());
 }
 
+/** Stores the new prices, then lets order matching and alerts react, all in one transaction. */
 async function finishTick(changed: LiveQuote[]): Promise<void> {
   await transaction(async () => {
     await persistQuotes(changed);
     await persistBars(changed);
+    for (const listener of tickListeners) await listener(changed);
   });
-  bus.emit('prices', changed.map(toTickTuple));
-  for (const listener of tickListeners) {
-    try {
-      listener(changed);
-    } catch (err) {
-      console.error('Market tick listener failed', err);
-    }
-  }
 }
 
 /** Advances every simulated price by one step. With a live feed, only securities it does not cover move, and only while the market is open. */
@@ -275,7 +287,7 @@ export async function tick(at: number = nowMs()): Promise<LiveQuote[]> {
     if (!isMarketOpen()) return [];
   } else {
     const today = istDate(at);
-    if (today !== tradingDate) await rollover(today);
+    if (today > tradingDate) await rollover(today);
   }
 
   const theta = 1 - Math.exp(-config.tickIntervalMs / DEVIATION_TAU_MS);
@@ -288,6 +300,9 @@ export async function tick(at: number = nowMs()): Promise<LiveQuote[]> {
     if (!state) {
       resetState(q);
       state = priceState.get(q.securityId)!;
+    } else if (roundToTick(Math.exp(state.logAnchor + state.deviation), q.tickSize) !== q.last) {
+      // Another server instance (or an admin) moved the price: continue the walk from where it is now.
+      state.logAnchor = Math.log(q.last) - state.deviation;
     }
     const vol = dailyVol(q);
     const anchorVol = (vol * 0.55) / Math.sqrt(ticksPerDay());
@@ -338,9 +353,15 @@ export async function setPrice(securityId: number, price: number, at: number = n
 
 /** Closes the trading day: stores daily candles, opens the next session and notifies listeners. */
 export async function rollover(newDate: string): Promise<void> {
-  const previousDate = tradingDate;
-  const quotes = allQuotes();
   await transaction(async () => {
+    // Another server instance may have opened the new session already.
+    const stored = await getState('tradingDate');
+    if (stored && stored >= newDate) {
+      await reloadMarket();
+      return;
+    }
+    const previousDate = tradingDate;
+    const quotes = allQuotes();
     for (const q of quotes) {
       if (q.tradingDate < newDate) {
         await run(
@@ -375,18 +396,11 @@ export async function rollover(newDate: string): Promise<void> {
     await persistQuotes(quotes);
     await setState('tradingDate', newDate);
     await run('DELETE FROM intraday_prices WHERE ts < ?', nowMs() - INTRADAY_RETENTION_DAYS * DAY_MS);
+    tradingDate = newDate;
+    currentBars.clear();
+    newDayDrifts();
+    for (const listener of rolloverListeners) await listener(previousDate, newDate);
   });
-  tradingDate = newDate;
-  currentBars.clear();
-  newDayDrifts();
-  bus.emit('market-rollover', { previousDate, newDate });
-  for (const listener of rolloverListeners) {
-    try {
-      listener(previousDate, newDate);
-    } catch (err) {
-      console.error('Market rollover listener failed', err);
-    }
-  }
 }
 
 /** One security's state as reported by an external feed (prices in paise, time in ms). */
@@ -444,24 +458,4 @@ export async function applyExternalQuotes(updates: ExternalQuote[]): Promise<Liv
 /** Forgets in-progress bars, after a feed has rewritten the stored intraday history. */
 export function resetCurrentBars(): void {
   currentBars.clear();
-}
-
-export function startSimulation(): void {
-  if (timer) return;
-  timer = setInterval(async () => {
-    try {
-      await tick();
-    } catch (err) {
-      console.error('Market tick failed', err);
-    }
-  }, config.tickIntervalMs);
-}
-
-export function stopSimulation(): void {
-  if (timer) clearInterval(timer);
-  timer = null;
-}
-
-export function isSimulationRunning(): boolean {
-  return timer !== null;
 }

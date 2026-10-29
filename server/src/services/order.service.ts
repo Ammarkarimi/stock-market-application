@@ -323,10 +323,10 @@ export async function previewOrder(userId: number, input: OrderInput): Promise<O
   };
 }
 
-function emitOrderUpdate(userId: number, orderId: number): void {
-  afterCommit(() => {
-    emitToUser(userId, 'order', { id: orderId });
-    emitToUser(userId, 'portfolio');
+function emitOrderUpdate(userId: number): void {
+  afterCommit(async () => {
+    await emitToUser(userId, 'order');
+    await emitToUser(userId, 'portfolio');
   });
 }
 
@@ -340,7 +340,7 @@ async function rejectOrder(order: OrderRow, symbol: string, reason: string, acto
   );
   await notify(order.user_id, 'ORDER', 'Order rejected', `${sideVerb(order.side)} ${order.quantity} ${symbol}: ${reason}`, '/orders?tab=history');
   await audit({ actor, action: 'ORDER_REJECTED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
-  emitOrderUpdate(order.user_id, order.id);
+  emitOrderUpdate(order.user_id);
 }
 
 /**
@@ -443,7 +443,7 @@ async function executeOrder(order: OrderRow, quote: LiveQuote, price: number, ac
     now,
     order.id,
   );
-  if (!historical) recordTradeVolume(order.security_id, order.quantity, price);
+  if (!historical) await recordTradeVolume(order.security_id, order.quantity, price);
 
   const verb = order.side === 'BUY' ? 'Bought' : 'Sold';
   const pnlText = realizedPnl !== null ? ` Realized P&L: ${formatInr(realizedPnl)}.` : '';
@@ -462,7 +462,7 @@ async function executeOrder(order: OrderRow, quote: LiveQuote, price: number, ac
     entityId: order.id,
     details: { symbol: quote.symbol, side: order.side, quantity: order.quantity, price: toRupees(price), charges: toRupees(charges.total), tradeId: Number(trade.lastInsertRowid) },
   });
-  emitOrderUpdate(order.user_id, order.id);
+  emitOrderUpdate(order.user_id);
   return true;
 }
 
@@ -507,7 +507,7 @@ async function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, 
     );
     await notify(order.user_id, 'ORDER', 'IOC order cancelled', `${sideVerb(order.side)} ${order.quantity} ${quote.symbol} was not marketable and has been cancelled.`, '/orders?tab=history');
     await audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason: 'IOC not marketable' } });
-    emitOrderUpdate(order.user_id, order.id);
+    emitOrderUpdate(order.user_id);
     return;
   }
   if (order.side === 'BUY') {
@@ -523,7 +523,7 @@ async function processNewOrder(order: OrderRow, quote: LiveQuote, actor: Actor, 
     await rejectOrder(order, quote.symbol, 'Insufficient holdings', actor);
     return;
   }
-  emitOrderUpdate(order.user_id, order.id);
+  emitOrderUpdate(order.user_id);
 }
 
 export async function placeOrder(userId: number, input: OrderInput, pin: string | undefined, actor: Actor): Promise<OrderDto> {
@@ -668,7 +668,7 @@ export async function cancelOrder(orderId: number, userId: number | null, actor:
     const symbol = getQuote(order.security_id)?.symbol ?? '';
     await notify(order.user_id, 'ORDER', 'Order cancelled', `${sideVerb(order.side)} ${order.quantity} ${symbol} — ${reason}.`, '/orders?tab=history');
     await audit({ actor, action: 'ORDER_CANCELLED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id, details: { reason } });
-    emitOrderUpdate(order.user_id, order.id);
+    emitOrderUpdate(order.user_id);
     return orderDtoById(order.id);
   });
 }
@@ -735,7 +735,7 @@ async function expireOrders(stale: (OrderRow & { symbol: string })[]): Promise<n
       );
       await notify(order.user_id, 'ORDER', 'Order expired', `${sideVerb(order.side)} ${order.quantity} ${order.symbol} expired unexecuted at the end of the trading day.`, '/orders?tab=history');
       await audit({ actor: SYSTEM_ACTOR, action: 'ORDER_EXPIRED', subjectUserId: order.user_id, entityType: 'ORDER', entityId: order.id });
-      emitOrderUpdate(order.user_id, order.id);
+      emitOrderUpdate(order.user_id);
     });
   }
   return stale.length;

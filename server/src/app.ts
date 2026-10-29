@@ -5,6 +5,7 @@ import express, { Router } from 'express';
 import helmet from 'helmet';
 import { config } from './config.js';
 import { loadSession, requireAdmin, requireAuth } from './middleware/auth.js';
+import { marketRuntime } from './middleware/marketRuntime.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -13,8 +14,10 @@ import adminRoutes from './routes/admin.routes.js';
 import alertsRoutes from './routes/alerts.routes.js';
 import analysisRoutes from './routes/analysis.routes.js';
 import authRoutes from './routes/auth.routes.js';
+import cronRoutes from './routes/cron.routes.js';
 import fundsRoutes from './routes/funds.routes.js';
 import iposRoutes from './routes/ipos.routes.js';
+import liveRoutes from './routes/live.routes.js';
 import marketRoutes from './routes/market.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import ordersRoutes from './routes/orders.routes.js';
@@ -22,7 +25,6 @@ import portfolioRoutes from './routes/portfolio.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import securitiesRoutes from './routes/securities.routes.js';
 import statementsRoutes from './routes/statements.routes.js';
-import streamRoutes from './routes/stream.routes.js';
 import tradesRoutes from './routes/trades.routes.js';
 import watchlistsRoutes from './routes/watchlists.routes.js';
 
@@ -54,6 +56,11 @@ export function createApp() {
   if (!config.isTest) app.use(requestLogger);
 
   const api = Router();
+  api.get('/health', (_req, res) => {
+    res.json({ status: 'ok', time: new Date().toISOString(), demo: config.seedDemoData });
+  });
+  api.use('/cron', cronRoutes);
+  if (config.marketRuntime) api.use(marketRuntime);
   api.use(apiLimiter);
   api.use(express.json({ limit: '100kb' }));
   api.use(cookieParser());
@@ -64,14 +71,11 @@ export function createApp() {
     next();
   });
 
-  api.get('/health', (_req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString(), demo: config.seedDemoData });
-  });
   api.use('/auth', authRoutes);
   api.use('/profile', requireAuth, profileRoutes);
   api.use('/market', requireAuth, marketRoutes);
   api.use('/securities', requireAuth, securitiesRoutes);
-  api.use('/stream', requireAuth, streamRoutes);
+  api.use('/live', requireAuth, liveRoutes);
   api.use('/orders', requireAuth, ordersRoutes);
   api.use('/trades', requireAuth, tradesRoutes);
   api.use('/portfolio', requireAuth, portfolioRoutes);
