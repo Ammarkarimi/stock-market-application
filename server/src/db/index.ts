@@ -49,7 +49,8 @@ function postgresDriver(connectionString: string): Driver {
   pg.types.setTypeParser(BIGINT_OID, Number);
   pg.types.setTypeParser(NUMERIC_OID, Number);
   const pool = new pg.Pool({
-    connectionString,
+    // node-postgres already verifies the server certificate for sslmode=require; say so to silence its warning.
+    connectionString: connectionString.replace(/([?&]sslmode=)(prefer|require|verify-ca)\b/, '$1verify-full'),
     max: config.databasePoolSize,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
@@ -57,7 +58,10 @@ function postgresDriver(connectionString: string): Driver {
   pool.on('error', (err) => console.error('Idle database connection failed', err));
   // Lets Vercel close idle connections before it suspends an instance.
   if (process.env.VERCEL) attachDatabasePool(pool);
-  const toRows = <T>(result: pg.QueryResult): Rows<T> => ({ rows: result.rows as T[], rowCount: result.rowCount ?? 0 });
+  const toRows = <T>(result: pg.QueryResult): Rows<T> => ({
+    rows: result.rows as T[],
+    rowCount: result.rowCount ?? 0,
+  });
   return {
     kind: 'postgres',
     async query<T>(sql: string, params: unknown[]) {
@@ -158,6 +162,15 @@ function currentTransaction(): TransactionContext | undefined {
  * time as they did on SQLite. Each statement after the lock sees everything committed before it, which keeps
  * read-then-write logic (available funds, the audit hash chain) correct with many concurrent requests.
  */
+// Transactions wait for the write lock one at a time within this process, so a burst of writes (a history import)
+// holds one pooled connection instead of all of them, and reads keep flowing.
+let writeQueue: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const result = writeQueue.then(fn, fn);
+  writeQueue = result.catch(() => {});
+  return result;
+}
+
 export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
   const outer = currentTransaction();
   if (outer) {
@@ -175,21 +188,23 @@ export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
   }
 
   const driver = await database();
-  const { result, callbacks } = await driver.withConnection(async (connection) => {
-    const ctx: TransactionContext = { connection, active: true, savepoints: 0, afterCommit: [] };
-    await connection.query('BEGIN', []);
-    try {
-      await connection.query('SELECT pg_advisory_xact_lock($1)', [WRITE_LOCK]);
-      const value = await context.run(ctx, fn);
-      await connection.query('COMMIT', []);
-      return { result: value, callbacks: ctx.afterCommit };
-    } catch (err) {
-      await connection.query('ROLLBACK', []).catch(() => {});
-      throw err;
-    } finally {
-      ctx.active = false;
-    }
-  });
+  const { result, callbacks } = await oneAtATime(() =>
+    driver.withConnection(async (connection) => {
+      const ctx: TransactionContext = { connection, active: true, savepoints: 0, afterCommit: [] };
+      await connection.query('BEGIN', []);
+      try {
+        await connection.query('SELECT pg_advisory_xact_lock($1)', [WRITE_LOCK]);
+        const value = await context.run(ctx, fn);
+        await connection.query('COMMIT', []);
+        return { result: value, callbacks: ctx.afterCommit };
+      } catch (err) {
+        await connection.query('ROLLBACK', []).catch(() => {});
+        throw err;
+      } finally {
+        ctx.active = false;
+      }
+    }),
+  );
   for (const callback of callbacks) {
     try {
       await callback();
@@ -249,7 +264,9 @@ export function toPostgres(sql: string): string {
 }
 
 function normalize(params: unknown[]): unknown[] {
-  return params.map((value) => (value === undefined ? null : typeof value === 'boolean' ? Number(value) : value));
+  return params.map((value) =>
+    value === undefined ? null : typeof value === 'boolean' ? Number(value) : value,
+  );
 }
 
 async function execute<T>(sql: string, params: unknown[]): Promise<Rows<T>> {
@@ -306,11 +323,19 @@ export function assignments(values: Record<string, unknown>): { sql: string; par
  * bulk writes such as price history take a handful of round trips instead of one per row. `suffix` is added
  * to each statement, e.g. an ON CONFLICT clause; rows in one call must not conflict with each other.
  */
-export async function insertMany(table: string, columns: string[], rows: unknown[][], suffix = ''): Promise<void> {
+export async function insertMany(
+  table: string,
+  columns: string[],
+  rows: unknown[][],
+  suffix = '',
+): Promise<void> {
   const perStatement = Math.max(1, Math.min(1000, Math.floor(65_000 / columns.length)));
   const tuple = `(${columns.map(() => '?').join(', ')})`;
   for (let i = 0; i < rows.length; i += perStatement) {
     const chunk = rows.slice(i, i + perStatement);
-    await execute(`INSERT INTO ${table} (${columns.join(', ')}) VALUES ${chunk.map(() => tuple).join(', ')} ${suffix}`, chunk.flat());
+    await execute(
+      `INSERT INTO ${table} (${columns.join(', ')}) VALUES ${chunk.map(() => tuple).join(', ')} ${suffix}`,
+      chunk.flat(),
+    );
   }
 }
