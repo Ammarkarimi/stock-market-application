@@ -279,7 +279,7 @@ As a visitor, I want to open StockKaro at a web address and sign up, so that I c
 
 **US-41 Up-to-date prices while browsing**
 As an investor, I want prices, orders and notifications on screen to refresh by themselves, so that I see the market move.
-- Quotes refresh every few seconds while the page is visible, and pause while it is in the background.
+- Quotes refresh every few seconds while the page is visible, and only about once a minute while it is in the background.
 - Market data is refreshed from the exchange feed at most every 15 seconds, however many people are online.
 - Limit orders, price alerts, end-of-day expiry and IPO allotment are processed when prices refresh, and at least daily.
 
@@ -302,9 +302,9 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-03 Logout | Account menu | `POST /auth/logout` | auth | auth |
 | US-04 Profile management | `/profile` | `GET/PATCH /profile`, `PUT /profile/bank-account` | auth, trading | funds |
 | US-05 Secure authentication | all | session cookie, CSRF and origin checks, rate limits, `POST /profile/password` | auth | auth |
-| US-06 Session management | `/profile?tab=security` | `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-others` | auth, stream | auth |
+| US-06 Session management | `/profile?tab=security` | `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-others` | auth, live | auth |
 | US-07 Transaction confirmation | order, IPO and withdrawal dialogs | `POST /profile/pin`; PIN checked by orders, IPOs, withdrawals | trading | trading |
-| US-08 Dashboard | `/` | `GET /portfolio`, `/market/overview`, `/watchlists`, `/orders`, `/funds`, `GET /stream` | — | — |
+| US-08 Dashboard | `/` | `GET /portfolio`, `/market/overview`, `/watchlists`, `/orders`, `/funds`, `GET /live` | — | — |
 | US-09 Market indices | `/markets`, `/stocks/NIFTY50` | `GET /market/indices`, `/securities/:symbol/constituents` | market | — |
 | US-10 Movers and trends | `/markets`, `/` | `GET /market/movers`, `/market/sectors`, `/market/breadth` | market | — |
 | US-11 Search securities | top bar, `/explore` | `GET /securities/search`, `/securities` | market | trading |
@@ -317,7 +317,7 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-18 Portfolio performance | `/`, `/portfolio` | `GET /portfolio/performance` | trading | — |
 | US-19 Watchlists | `/watchlist`, Watch menu | `/watchlists` (CRUD and items) | engagement | watchlist-alerts |
 | US-20 Price alerts | `/alerts`, Alert dialog | `/alerts` (CRUD) | engagement | watchlist-alerts |
-| US-21 Notifications | bell, `/notifications` | `/notifications`, `PUT /profile/notification-preferences`, `GET /stream` | engagement, trading | trading |
+| US-21 Notifications | bell, `/notifications` | `/notifications`, `PUT /profile/notification-preferences`, `GET /live` | engagement, trading | trading |
 | US-22 Browse IPOs | `/ipo`, `/ipo/:id` | `GET /ipos`, `GET /ipos/:id` | ipo | ipo |
 | US-23 Apply for an IPO | `/ipo/:id` | `POST /ipos/:id/apply`, `POST /ipos/applications/:id/cancel` | ipo | ipo |
 | US-24 Allotment and history | `/ipo?tab=applications` | `GET /ipos/applications`; allotment and listing run by the scheduler | ipo | ipo |
@@ -336,6 +336,6 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-37 Pattern detection | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-38 Buy or not verdict | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
 | US-39 Indicators | `/analyze/:symbol` | `GET /analysis/:symbol` | analysis | analyzer |
-| US-40 Public website | all | `vercel.json`, `api/index.ts` | — | all e2e specs |
+| US-40 Public website | all | `vercel.json`, `api/index.mjs` | — | all e2e specs |
 | US-41 Up-to-date prices while browsing | all | `GET /live`, `GET /cron/daily` | live, trading | trading |
 | US-42 Durable accounts and data | — | Postgres data layer (`server/src/db`) | all | all e2e specs |

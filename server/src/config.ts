@@ -73,6 +73,14 @@ export const config = {
    * cleanup). Tests drive the market themselves.
    */
   marketRuntime: bool('MARKET_RUNTIME', !isTest),
+  /**
+   * Existing accounts given the administrator role when a server instance starts (comma-separated), for the first
+   * admin of a deployment without shell access to its database. Only accounts that already exist are promoted.
+   */
+  adminEmails: (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((email) => email.trim())
+    .filter(Boolean),
   /** Bearer token Vercel Cron sends to /api/cron/daily; without one the endpoint is disabled. */
   cronSecret: process.env.CRON_SECRET || null,
   clientDistPath: path.resolve(serverRoot, '../client/dist'),

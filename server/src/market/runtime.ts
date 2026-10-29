@@ -4,9 +4,12 @@ import { config } from '../config.js';
 import { database, transaction } from '../db/index.js';
 import { nowMs } from '../lib/clock.js';
 import { DEMO_ACCOUNTS, seedDemoData } from '../seed/demo.js';
+import { SYSTEM_ACTOR } from '../services/actor.js';
+import { setUserRole } from '../services/admin.service.js';
 import { processIpoLifecycle } from '../services/ipo.service.js';
 import { cleanupSessions } from '../services/session.service.js';
 import { claimLease } from '../services/settings.service.js';
+import { findUserByEmail } from '../services/user.repository.js';
 import { initMarket, reloadMarket, tick } from './engine.js';
 import { enableLiveFeed, liveFeedEnabled, liveHistoryDue, refreshLiveQuotes, syncLiveFundamentals, syncLiveHistory } from './liveFeed.js';
 import { seedIpos } from './seedIpos.js';
@@ -58,7 +61,22 @@ async function prepare(): Promise<void> {
       console.log(`Demo admin:    ${DEMO_ACCOUNTS.admin.email} / ${DEMO_ACCOUNTS.admin.password} (PIN ${DEMO_ACCOUNTS.admin.pin})`);
     }
   }
+  await promoteConfiguredAdmins();
   syncedAt = nowMs();
+}
+
+async function promoteConfiguredAdmins(): Promise<void> {
+  for (const email of config.adminEmails) {
+    const user = await findUserByEmail(email);
+    if (!user || user.role === 'ADMIN') continue;
+    try {
+      await setUserRole(user.id, 'ADMIN', { ...SYSTEM_ACTOR, userAgent: 'ADMIN_EMAILS setting' });
+      console.log(`${user.email} is now an administrator (ADMIN_EMAILS).`);
+    } catch (err) {
+      // Another instance starting at the same time may have promoted them first.
+      console.warn(`Could not promote ${user.email}: ${(err as Error).message}`);
+    }
+  }
 }
 
 /** Connects, migrates and seeds the database and loads the market; runs once per server instance. */

@@ -61,8 +61,9 @@ order execution likewise needs a SEBI-registered broker; see *Real trading* belo
 | -------- | ---------- |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, React Router, TanStack Query, Lightweight Charts |
 | Backend  | Node.js 22, Express 5, TypeScript, Zod |
-| Database | SQLite (better-sqlite3, WAL mode) |
-| Realtime | Server-Sent Events |
+| Database | PostgreSQL: Neon in production, PGlite (Postgres in WebAssembly) for development and tests |
+| Hosting  | Vercel (static client, one Node.js function for the API, daily cron) |
+| Realtime | Polling `/api/live` every five seconds |
 | Testing  | Vitest and supertest (API), Playwright (end to end) |
 
 ## Getting started
@@ -77,7 +78,7 @@ npm run dev
 - Web app: http://localhost:5173 (Vite proxies `/api` to the server)
 - API: http://localhost:4000/api
 
-In development the database is created at `server/data/stocksphere.db` and seeded with demo data on first start:
+In development the database is an embedded PGlite (Postgres) folder at `server/data/pglite`, seeded with demo data on first start:
 
 | Account  | Email               | Password      | Transaction PIN |
 | -------- | ------------------- | ------------- | --------------- |
@@ -115,7 +116,11 @@ The server reads environment variables, and `server/.env` when present (copy
 | -------- | ------- | ----------- |
 | `PORT` | `4000` | HTTP port |
 | `NODE_ENV` | `development` | `production` enables secure cookies, HSTS and hides demo credentials from the log |
-| `DATABASE_PATH` | `data/stocksphere.db` | SQLite file, relative to `server/`; `:memory:` for a throwaway database |
+| `DATABASE_URL` | none | Postgres connection string (`POSTGRES_URL` also works, as set by Vercel's Neon integration). Without it the server uses PGlite |
+| `DATABASE_PATH` | `data/pglite` | PGlite data folder when there is no `DATABASE_URL`, relative to `server/`; `:memory:` for a throwaway database |
+| `DATABASE_POOL_SIZE` | `5` | Postgres connections per server instance |
+| `CRON_SECRET` | none | Token Vercel Cron sends to `/api/cron/daily`; the endpoint is disabled without it |
+| `ADMIN_EMAILS` | none | Comma-separated emails of existing accounts made admins when a server instance starts |
 | `SEED_DEMO_DATA` | `true`, but `false` in production | Create the demo accounts and history on first start. Their passwords are public, so only enable this for demos |
 | `COOKIE_SECURE` | `true` in production | Mark the session cookie `Secure` and send HSTS. Set to `false` only when serving plain HTTP |
 | `TRUST_PROXY` | `0` | Number of reverse-proxy hops to trust for the client IP |
@@ -147,7 +152,24 @@ node server/dist/cli/promote-admin.js you@example.com   # or: npm run promote-ad
 
 Serve it over HTTPS behind a reverse proxy. The CSRF check compares the browser's `Origin` with the request host,
 so the proxy must preserve the `Host` header or set `X-Forwarded-Host`. Set `TRUST_PROXY=1` so rate limits and the
-audit trail see the client's IP, and allow long-lived responses on `/api/stream` (disable response buffering).
+audit trail see the client's IP.
+
+### Vercel
+
+[`vercel.json`](vercel.json) deploys the built client as static files and the API as one Node.js function
+([`api/index.mjs`](api/index.mjs)) in Singapore (`sin1`), with a daily cron at 16:47 IST.
+
+1. Import the repository into Vercel (no framework preset; the settings come from `vercel.json`).
+2. Under **Storage**, create a **Neon** Postgres database in the Singapore region and connect it to the project.
+   This sets `DATABASE_URL`.
+3. Add the environment variables `CRON_SECRET` (a long random string) and `TRUST_PROXY=1`.
+4. Deploy. The first request migrates and seeds the database, then real prices and history load in the
+   background within a minute or two.
+5. Register your account on the site, add `ADMIN_EMAILS=you@example.com` and redeploy to make it an admin.
+
+There are no long-running processes on Vercel: each request keeps its instance's copy of the market fresh and
+starts any due background work (price updates, the IPO lifecycle, clean-up) after its response. Database leases
+make sure each job runs once, whichever instance claims it. The cron covers quiet days.
 
 ### Docker
 
@@ -165,14 +187,14 @@ for a local demo; remove `SEED_DEMO_DATA` and `COOKIE_SECURE` from it for a real
 client/            React single-page app
   src/pages/       One component per screen (admin screens in pages/admin)
   src/components/  UI kit, layout, charts, market widgets and the order ticket
-  src/live/        Event-stream client: live quotes, notifications and cache updates
+  src/live/        Live polling client: quotes, notifications and cache updates
 server/
   src/routes/      Express routers, one per API area
   src/services/    Business logic: auth, sessions, orders, funds, IPOs, alerts, notifications, audit
-  src/market/      Security catalogue, live feed (Yahoo Finance), price simulation and IPO catalogue
+  src/market/      Security catalogue, live feed (Yahoo Finance), price simulation, IPO catalogue and the
+                   request-driven runtime that schedules background work
   src/analysis/    Chart analyzer: indicators, swing structure, pattern detection and the verdict
-  src/jobs/        Scheduler for the IPO lifecycle and session clean-up
-  src/db/          SQLite connection and migrations
+  src/db/          Postgres access (pg or PGlite), transactions and migrations
   tests/           API tests
 e2e/               Playwright end-to-end tests
 docs/              User stories
@@ -180,7 +202,7 @@ docs/              User stories
 
 - **Money** is stored as integer paise and exposed by the API in rupees; dates follow Indian Standard Time.
 - **Live prices**: one batched Yahoo Finance request refreshes every quote; each change runs order matching, price
-  alerts and the live stream exactly as a simulated tick would. A new session closes the previous trading day into
+  alerts exactly as a simulated tick would. A new session closes the previous trading day into
   the daily history.
 - **Market simulation** (`MARKET_DATA=simulated`, and for securities not on the exchange): prices follow a random
   walk with daily drift, bounded by circuit limits; indices are computed from their weighted constituents and index
@@ -200,8 +222,11 @@ docs/              User stories
   (between one and three ATRs below the price), and the target is the next resistance. While the exchange is
   trading (from Yahoo's session times), the last candle is today's unfinished session: trend and momentum use its
   latest price, while candlestick patterns and volume are read from completed sessions only.
-- **Real-time updates**: the server pushes quotes, order updates, notifications and session revocations over
-  `GET /api/stream`. Events are emitted only after their database transaction commits.
+- **Real-time updates**: signed-in browsers poll `GET /api/live` every five seconds (once a minute in a hidden tab)
+  for every quote plus the user's new notifications and changes (orders, funds, holdings, IPOs, alerts) since their
+  last poll, and refresh the matching screens. A revoked session gets a 401 on its next poll and signs out.
+- **Writes** run in transactions that each take one Postgres advisory lock, so they apply one at a time, as
+  read-then-write logic such as available funds and the audit hash chain needs.
 
 ### API overview
 
@@ -221,7 +246,7 @@ and `/auth/me` requires a session.
 | Notifications | `GET /notifications`, `/notifications/unread-count`; `POST /notifications/:id/read`, `/notifications/read-all`; `DELETE /notifications/:id` |
 | IPOs | `GET /ipos`, `/ipos/:id`, `/ipos/applications`; `POST /ipos/:id/apply`, `/ipos/applications/:id/cancel` |
 | Chart analyzer | `GET /analysis/search?q=`, `GET /analysis/:symbol` (a Yahoo Finance ticker such as `RELIANCE.NS`, `AAPL` or `^NSEI`) |
-| Live updates | `GET /stream` (Server-Sent Events) |
+| Live updates | `GET /live?notificationsAfter=&eventsAfter=` |
 | Admin | `/admin/overview`, `/admin/users`, `/admin/securities`, `/admin/ipos`, `/admin/orders`, `/admin/trades`, `/admin/ledger`, `/admin/fund-transactions`, `/admin/audit-logs`, `/admin/settings`, `/admin/announcements` |
 
 Errors use one shape: `{ "error": { "code": "…", "message": "…", "details": { "fields": { … } } } }`.
