@@ -288,6 +288,13 @@ As an investor, I want my account and history kept safely, so that nothing is lo
 - All data lives in a managed Postgres database, independent of the servers that answer requests.
 - Money movements stay consistent when many people use StockKaro at the same time.
 
+**US-43 Any NSE stock on demand**
+As an investor, I want to find and trade any company listed on the NSE, not only the ones StockKaro starts with, so that I can follow the stocks I actually care about.
+- Searching shows matching NSE stocks and ETFs that StockKaro does not list yet, after the ones it already lists.
+- Opening one adds it for everyone, with its real price, five years of daily history, sector and industry, and live (delayed) prices from then on.
+- It can then be traded, watched and given alerts like any other stock; names that are not on the NSE are not found.
+- Each person can add a limited number of new stocks per hour, so automated misuse cannot fill the database.
+
 ---
 
 ## Traceability
@@ -339,3 +346,4 @@ Where each story is implemented and which automated tests cover it. Server tests
 | US-40 Public website | all | `vercel.json`, `api/index.mjs` | — | all e2e specs |
 | US-41 Up-to-date prices while browsing | all | `GET /live`, `GET /cron/daily` | live, trading | trading |
 | US-42 Durable accounts and data | — | Postgres data layer (`server/src/db`) | all | all e2e specs |
+| US-43 Any NSE stock on demand | top bar, `/stocks/:symbol` | `GET /securities/search`, `/securities/:symbol` | live-feed | — |
