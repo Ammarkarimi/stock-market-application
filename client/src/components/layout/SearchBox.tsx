@@ -7,7 +7,7 @@ import { api, qs, symbolPath } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatPercent, formatPrice } from '@/lib/format';
 import { keys } from '@/lib/queryClient';
-import type { SecurityListItem } from '@/lib/types';
+import type { ExchangeMatch, SecurityListItem } from '@/lib/types';
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -35,6 +35,17 @@ export function SearchBox({ className }: { className?: string }) {
     staleTime: 10_000,
   });
   const items = term ? (data?.items ?? []) : [];
+  // NSE stocks StockKaro does not list yet come from the exchange, so they arrive separately and a little later.
+  const { data: exchangeData, isFetching: exchangeFetching } = useQuery({
+    queryKey: keys.exchangeSearch(term),
+    queryFn: () => api.get<{ exchange: ExchangeMatch[] }>(`/securities/search${qs({ q: term, limit: 1, exchange: true })}`),
+    enabled: term.length >= 2,
+    staleTime: 60_000,
+  });
+  const listed = new Set(items.map((item) => item.symbol));
+  const more = term.length >= 2 ? (exchangeData?.exchange ?? []).filter((match) => !listed.has(match.symbol)) : [];
+  const options = [...items.map((item) => item.symbol), ...more.map((match) => match.symbol)];
+  const searching = isFetching || exchangeFetching;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -65,7 +76,7 @@ export function SearchBox({ className }: { className?: string }) {
         type="search"
         value={query}
         role="combobox"
-        aria-expanded={open && items.length > 0}
+        aria-expanded={open && options.length > 0}
         aria-controls={listId}
         aria-autocomplete="list"
         aria-label="Search stocks, ETFs and indices"
@@ -79,12 +90,12 @@ export function SearchBox({ className }: { className?: string }) {
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
-            setActive((i) => Math.min(i + 1, items.length - 1));
+            setActive((i) => Math.min(i + 1, options.length - 1));
           } else if (event.key === 'ArrowUp') {
             event.preventDefault();
             setActive((i) => Math.max(i - 1, 0));
           } else if (event.key === 'Enter') {
-            if (items[active]) go(items[active].symbol);
+            if (options[active]) go(options[active]);
             else if (term) {
               setOpen(false);
               navigate(`/explore${qs({ q: term })}`);
@@ -99,8 +110,8 @@ export function SearchBox({ className }: { className?: string }) {
       <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-border px-1.5 text-[10px] text-subtle sm:block">/</kbd>
       {open && term && (
         <div className="absolute left-0 right-0 top-12 z-50 overflow-hidden rounded-xl border border-border bg-surface shadow-pop">
-          {items.length === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-muted">{isFetching ? 'Searching…' : `No results for “${term}”`}</p>
+          {options.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-muted">{searching ? 'Searching…' : `No results for “${term}”`}</p>
           ) : (
             <ul id={listId} role="listbox">
               {items.map((item, index) => (
@@ -128,6 +139,36 @@ export function SearchBox({ className }: { className?: string }) {
                   </div>
                 </li>
               ))}
+              {more.length > 0 && (
+                <li role="presentation" className="border-t border-border px-4 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-subtle">
+                  More on the NSE
+                </li>
+              )}
+              {more.map((match, i) => {
+                const index = items.length + i;
+                return (
+                  <li
+                    key={`nse-${match.symbol}`}
+                    role="option"
+                    aria-selected={index === active}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      go(match.symbol);
+                    }}
+                    onMouseEnter={() => setActive(index)}
+                    className={cn('flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5', index === active && 'bg-surface-2')}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-fg">{match.symbol}</span>
+                        <Badge tone={match.type === 'STOCK' ? 'neutral' : 'primary'}>{match.type}</Badge>
+                      </div>
+                      <p className="truncate text-xs text-muted">{[match.name, match.sector].filter(Boolean).join(' · ')}</p>
+                    </div>
+                    <span className="shrink-0 text-xs font-medium text-primary">Add &amp; view</span>
+                  </li>
+                );
+              })}
             </ul>
           )}
           <button

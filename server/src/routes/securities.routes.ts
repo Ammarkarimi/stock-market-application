@@ -1,8 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { paginationQuery, parse, symbolParam } from '../lib/validation.js';
 import { currentUser } from '../middleware/auth.js';
+import { listFromExchange, searchExchange } from '../market/exchangeListings.js';
 import { getQuoteBySymbol, toQuoteDto } from '../market/quoteStore.js';
+import { actorFrom } from '../services/actor.js';
 import { listAlerts } from '../services/alert.service.js';
 import {
   getIndexConstituents,
@@ -21,16 +23,21 @@ const router = Router();
 
 const typeFilter = z.enum(SECURITY_TYPES as [string, ...string[]]).optional();
 
-router.get('/search', (req, res) => {
+router.get('/search', async (req, res) => {
   const query = parse(
     z.object({
       q: z.string().trim().max(50).default(''),
       type: typeFilter,
       limit: z.coerce.number().int().min(1).max(25).default(10),
+      /** Also look for NSE stocks and ETFs StockKaro does not list yet. */
+      exchange: z.enum(['true', 'false']).default('false'),
     }),
     req.query,
   );
-  res.json({ items: searchSecurities(query.q, { type: query.type as never, limit: query.limit }) });
+  const items = searchSecurities(query.q, { type: query.type as never, limit: query.limit });
+  const wantsExchange = query.exchange === 'true' && (!query.type || query.type === 'STOCK' || query.type === 'ETF');
+  const exchange = wantsExchange ? (await searchExchange(query.q)).filter((m) => !query.type || m.type === query.type) : [];
+  res.json({ items, exchange });
 });
 
 router.get('/sectors', (_req, res) => {
@@ -59,8 +66,14 @@ router.get('/', (req, res) => {
   res.json(listSecurities({ ...query, type: query.type as never }));
 });
 
+/** Opening an NSE stock StockKaro does not list yet lists it first (with a live feed). */
+async function ensureListed(req: Request, symbol: string): Promise<void> {
+  if (!getQuoteBySymbol(symbol)) await listFromExchange(symbol, actorFrom(req));
+}
+
 router.get('/:symbol', async (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
+  await ensureListed(req, symbol);
   const detail = await getSecurityDetail(symbol);
   const user = currentUser(req);
   const securityId = getQuoteBySymbol(symbol)!.securityId;
@@ -74,6 +87,7 @@ router.get('/:symbol', async (req, res) => {
 
 router.get('/:symbol/history', async (req, res) => {
   const symbol = parse(symbolParam(), req.params.symbol);
+  await ensureListed(req, symbol);
   const { range } = parse(z.object({ range: z.enum(HISTORY_RANGES).default('1D') }), req.query);
   res.json((await getPriceHistory(symbol, range)));
 });

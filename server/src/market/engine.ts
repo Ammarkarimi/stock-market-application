@@ -52,8 +52,8 @@ const trackingRatio = new Map<number, number>();
 const currentBars = new Map<number, Bar>();
 let indexComponents = new Map<number, IndexComponent[]>();
 let tradingDate = '';
-/** Securities priced by an external feed instead of the simulator. */
-const externalIds = new Set<number>();
+/** Whether an external feed prices the securities that have a live ticker. */
+let externalFeed = false;
 const tickListeners: TickListener[] = [];
 const rolloverListeners: RolloverListener[] = [];
 
@@ -63,16 +63,19 @@ const dailyVol = (q: LiveQuote) => q.volatility / Math.sqrt(TRADING_DAYS_PER_YEA
 const isIndex = (q: LiveQuote) => q.type === 'INDEX';
 const isTracking = (q: LiveQuote) => !isIndex(q) && q.underlyingSymbol !== null;
 const isPrimary = (q: LiveQuote) => !isIndex(q) && q.underlyingSymbol === null;
-const isExternal = (q: LiveQuote) => externalIds.has(q.securityId);
+const isExternal = (q: LiveQuote) => externalFeed && q.liveTicker !== null;
 
-/** Marks securities whose prices come from an external feed; the simulator leaves them alone. */
-export function setExternallyPriced(ids: Iterable<number>): void {
-  externalIds.clear();
-  for (const id of ids) externalIds.add(id);
+/**
+ * Hands securities with a live ticker to an external feed; the simulator leaves them alone. Which securities have
+ * one is stored with them, so every server instance agrees, including on securities listed after it started.
+ */
+export function setExternalFeed(enabled: boolean): void {
+  externalFeed = enabled;
 }
 
 export function isExternallyPriced(securityId: number): boolean {
-  return externalIds.has(securityId);
+  const q = getQuote(securityId);
+  return q !== undefined && isExternal(q);
 }
 
 export function onMarketTick(listener: TickListener): void {

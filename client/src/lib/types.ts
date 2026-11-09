@@ -92,6 +92,15 @@ export interface SecurityListItem extends Quote {
   marketCapCr: number | null;
 }
 
+/** An NSE stock or ETF StockKaro does not list yet; opening it lists it. */
+export interface ExchangeMatch {
+  symbol: string;
+  name: string;
+  type: SecurityType;
+  sector: string | null;
+  industry: string | null;
+}
+
 export interface IndexSummary extends Quote {
   sparkline: number[];
   constituents: number;

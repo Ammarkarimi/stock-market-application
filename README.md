@@ -14,8 +14,9 @@ audit trail.
 
 | Data | Source |
 | ---- | ------ |
-| Prices, day range and volume of the 84 catalogued stocks, ETFs, REITs, InvITs and indices | Yahoo Finance, refreshed every 15 s while NSE is open (about 15 minutes delayed) |
-| Daily history (5 years) and 5-minute intraday bars | Yahoo Finance, loaded at startup |
+| Prices, day range and volume of the 84 catalogued stocks, ETFs, REITs, InvITs and indices, and of NSE stocks listed on demand | Yahoo Finance, refreshed every 15 s while NSE is open (about 15 minutes delayed) |
+| Any other NSE stock or ETF: name, sector, industry and price | Yahoo Finance search; listed for everyone the first time someone opens it |
+| Daily history (5 years) and 5-minute intraday bars | Yahoo Finance, loaded in the background and refreshed daily |
 | EPS, book value, shares outstanding, dividends, ROE, debt/equity, beta, company description, annual revenue and profit | Yahoo Finance, refreshed daily |
 | Market hours | NSE's session as reported by Yahoo: open 9:15 am – 3:30 pm IST on trading days |
 | Chart analyzer: two years of daily prices for any listed stock, ETF or index worldwide, and symbol search | Yahoo Finance, on demand, cached for 10 minutes |
@@ -25,8 +26,13 @@ audit trail.
 While the market is closed, market and IOC orders are refused; DAY limit orders are accepted as after-market orders
 and execute when the price reaches them in the next session. DAY orders placed during a session expire at its close.
 
-If Yahoo Finance cannot be reached at startup, the server logs a warning and runs on simulated prices. Set
-`MARKET_DATA=simulated` to always use the simulator (a random-walk market that never closes), as the tests do.
+StockKaro starts with a catalogue of large companies (`server/src/market/catalog.ts`). Searching also shows matching
+NSE stocks and ETFs it does not list yet; opening one adds it, with five years of history and live prices from then on.
+Each person can add 20 new stocks an hour, and at most 1,000 can be added in all.
+
+If Yahoo Finance cannot be reached, prices stay at their last values and the market status shows the feed error. Set
+`MARKET_DATA=simulated` to always use the simulator (a random-walk market that never closes), as the tests do; it
+lists only the catalogue.
 
 **Licensing.** Yahoo Finance's data is for personal, non-commercial use. Before launching commercially, replace
 [`server/src/market/yahoo.ts`](server/src/market/yahoo.ts) with a licensed feed: an authorised NSE/BSE data vendor
@@ -240,7 +246,7 @@ and `/auth/me` requires a session.
 | Auth and sessions | `POST /auth/register`, `/auth/login`, `/auth/logout`; `GET /auth/me`, `/auth/sessions`; `DELETE /auth/sessions/:id`; `POST /auth/sessions/revoke-others` |
 | Profile | `GET`, `PATCH /profile`; `POST /profile/password`, `/profile/pin`; `PUT /profile/bank-account`, `/profile/notification-preferences`; `GET /profile/activity` |
 | Market | `GET /market/overview`, `/market/indices`, `/market/movers`, `/market/sectors`, `/market/breadth`, `/market/status` |
-| Securities | `GET /securities`, `/securities/search`, `/securities/quotes`, `/securities/sectors`, `/securities/:symbol`, `/securities/:symbol/history`, `/securities/:symbol/constituents` |
+| Securities | `GET /securities`, `/securities/search` (`exchange=true` adds unlisted NSE matches), `/securities/quotes`, `/securities/sectors`, `/securities/:symbol`, `/securities/:symbol/history`, `/securities/:symbol/constituents` |
 | Orders and trades | `POST /orders/preview`, `/orders`; `GET /orders`, `/orders/:id`; `PATCH /orders/:id`; `POST /orders/:id/cancel`; `GET /trades` |
 | Portfolio | `GET /portfolio`, `/portfolio/performance` |
 | Funds and statements | `GET /funds`, `/funds/transactions`; `POST /funds/deposit`, `/funds/withdraw`; `GET /statements`, `/statements/ledger.csv`, `/statements/trades.csv` |

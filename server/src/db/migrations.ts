@@ -402,6 +402,14 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    name: 'live_tickers',
+    sql: /* sql */ `
+      -- The live feed's ticker for securities priced by the exchange (e.g. INOXWIND.NS); NULL for simulated ones.
+      ALTER TABLE securities ADD COLUMN live_ticker CITEXT UNIQUE;
+    `,
+  },
 ];
 
 /** Advisory lock that keeps two server instances from migrating at the same time. */

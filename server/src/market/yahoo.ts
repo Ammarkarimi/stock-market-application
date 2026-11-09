@@ -29,6 +29,12 @@ export function yahooTicker(symbol: string): string {
 
 export interface YahooQuote {
   symbol: string;
+  longName?: string;
+  shortName?: string;
+  /** EQUITY, ETF, INDEX, … */
+  quoteType?: string;
+  /** Exchange code: NSI for the NSE, BSE for the BSE. */
+  exchange?: string;
   marketState?: string;
   regularMarketPrice?: number;
   regularMarketPreviousClose?: number;
@@ -86,6 +92,8 @@ export interface YahooChartMeta {
   gmtoffset?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
+  /** First day the instrument traded (seconds since the epoch). */
+  firstTradeDate?: number;
   /** Times (seconds since the epoch) of the current or next regular session. */
   currentTradingPeriod?: { regular?: { start: number; end: number } };
 }
@@ -97,6 +105,8 @@ export interface YahooSearchResult {
   exchange?: string;
   exchDisp?: string;
   quoteType?: string;
+  sector?: string;
+  industry?: string;
 }
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;

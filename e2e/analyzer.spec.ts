@@ -18,7 +18,7 @@ test.describe('Chart analyzer', () => {
     await expect(page).toHaveURL(/\/analyze\/RELIANCE\.NS$/);
     await expect(page.getByTestId('verdict')).toHaveText(/^(Buy|Wait|Avoid)$/, { timeout: 30_000 });
     await expect(page.getByRole('heading', { name: 'Reliance Industries Limited' })).toBeVisible();
-    await expect(page.getByText('Stop-loss')).toBeVisible();
+    await expect(page.getByText('Stop-loss', { exact: true })).toBeVisible();
     await expect(page.getByRole('meter', { name: 'Signal score' })).toBeVisible();
     for (const heading of ['Patterns found', 'Why this verdict', 'Indicators', 'Support and resistance']) {
       await expect(page.getByRole('heading', { name: heading })).toBeVisible();

@@ -30,6 +30,7 @@ export const keys = {
   history: (symbol: string, range: string) => ['securities', 'history', symbol, range] as const,
   constituents: (symbol: string) => ['securities', 'constituents', symbol] as const,
   search: (q: string) => ['securities', 'search', q] as const,
+  exchangeSearch: (q: string) => ['securities', 'search', 'exchange', q] as const,
   analysis: (symbol: string) => ['analysis', 'detail', symbol] as const,
   analysisSearch: (q: string) => ['analysis', 'search', q] as const,
   portfolio: ['portfolio'] as const,

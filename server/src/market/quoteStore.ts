@@ -21,6 +21,8 @@ export interface LiveQuote {
   beta: number;
   underlyingSymbol: string | null;
   sharesOutstanding: number | null;
+  /** The live feed's ticker when the exchange prices this security (null: simulated). */
+  liveTicker: string | null;
   last: number;
   prevClose: number;
   open: number;
@@ -69,6 +71,7 @@ interface QuoteJoinRow {
   beta: number | null;
   underlying_symbol: string | null;
   shares_outstanding: number | null;
+  live_ticker: string | null;
   last_price: number;
   prev_close: number;
   open: number;
@@ -85,7 +88,8 @@ const bySymbol = new Map<string, LiveQuote>();
 
 const SELECT_QUOTES = `
   SELECT q.*, s.symbol, s.name, s.security_type, s.exchange, s.sector, s.industry, s.is_tradable, s.trading_status,
-         s.tick_size, s.circuit_pct, s.volatility, s.avg_volume, s.beta, s.underlying_symbol, s.shares_outstanding
+         s.tick_size, s.circuit_pct, s.volatility, s.avg_volume, s.beta, s.underlying_symbol, s.shares_outstanding,
+         s.live_ticker
     FROM quotes q JOIN securities s ON s.id = q.security_id`;
 
 function fromRow(row: QuoteJoinRow): LiveQuote {
@@ -106,6 +110,7 @@ function fromRow(row: QuoteJoinRow): LiveQuote {
     beta: row.beta ?? 1,
     underlyingSymbol: row.underlying_symbol,
     sharesOutstanding: row.shares_outstanding,
+    liveTicker: row.live_ticker,
     last: row.last_price,
     prevClose: row.prev_close,
     open: row.open,

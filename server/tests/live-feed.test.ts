@@ -3,6 +3,7 @@ import { all, get } from '../src/db/index.js';
 import { freezeTime, resetTime } from '../src/lib/clock.js';
 import { addDays, istDayStart } from '../src/lib/time.js';
 import { currentTradingDate } from '../src/market/engine.js';
+import { LISTINGS_PER_HOUR, listFromExchange } from '../src/market/exchangeListings.js';
 import { enableLiveFeed, refreshLiveQuotes } from '../src/market/liveFeed.js';
 import { allQuotes, getQuoteBySymbol } from '../src/market/quoteStore.js';
 import { runDueWork, runLongJobs } from '../src/market/runtime.js';
@@ -14,6 +15,7 @@ import {
   type YahooCandle,
   type YahooProfile,
   type YahooQuote,
+  type YahooSearchResult,
 } from '../src/market/yahoo.js';
 import { SYSTEM_ACTOR } from '../src/services/actor.js';
 import { setSecurityPrice } from '../src/services/admin.service.js';
@@ -31,6 +33,8 @@ class FakeYahoo extends YahooFinance {
   readonly prices = new Map<string, number>();
   readonly prevCloses = new Map<string, number>();
   readonly volumes = new Map<string, number>();
+  /** Companies on the NSE that StockKaro does not list, by ticker. */
+  readonly nseOnly = new Map<string, { name: string; sector: string; industry: string }>();
 
   constructor() {
     super(() => Promise.reject(new Error('FakeYahoo makes no network requests')));
@@ -42,10 +46,14 @@ class FakeYahoo extends YahooFinance {
   }
 
   override async quotes(tickers: string[]): Promise<YahooQuote[]> {
-    return tickers.map((symbol) => {
-      const price = this.prices.get(symbol) ?? 100;
+    // Like Yahoo, unknown tickers are simply missing from the response.
+    return tickers.filter((symbol) => this.prices.has(symbol)).map((symbol) => {
+      const price = this.prices.get(symbol)!;
       return {
         symbol,
+        longName: this.nseOnly.get(symbol)?.name,
+        quoteType: symbol.startsWith('^') ? 'INDEX' : 'EQUITY',
+        exchange: 'NSI',
         marketState: this.marketState,
         regularMarketPrice: price,
         regularMarketPreviousClose: this.prevCloses.get(symbol) ?? price,
@@ -69,6 +77,21 @@ class FakeYahoo extends YahooFinance {
     const candle = (time: number) => ({ time: Math.floor(time / 1000), open: price, high: price * 1.01, low: price * 0.99, close: price, volume: 5000 });
     if (interval === '1d') return Array.from({ length: 31 }, (_, i) => candle(sessionTime(addDays(today, i - 30), 9, 15)));
     return Array.from({ length: 6 }, (_, i) => candle(sessionTime(today, 9, 15 + i * 5)));
+  }
+
+  override async history(ticker: string, range: string, interval: string) {
+    return { meta: { symbol: ticker, firstTradeDate: Math.floor(Date.parse('2015-04-09T03:45:00Z') / 1000) }, candles: await this.chart(ticker, range, interval) };
+  }
+
+  /** Each NSE-only company matching the query, followed by its BSE listing. */
+  override async search(query: string): Promise<YahooSearchResult[]> {
+    const q = query.toLowerCase();
+    return [...this.nseOnly]
+      .filter(([ticker, c]) => ticker.toLowerCase().includes(q) || c.name.toLowerCase().includes(q))
+      .flatMap(([ticker, c]) => [
+        { symbol: ticker, longname: c.name, exchange: 'NSI', quoteType: 'EQUITY', sector: c.sector, industry: c.industry },
+        { symbol: ticker.replace('.NS', '.BO'), longname: c.name, exchange: 'BSE', quoteType: 'EQUITY', sector: c.sector, industry: c.industry },
+      ]);
   }
 
   override async profile(): Promise<YahooProfile> {
@@ -198,5 +221,67 @@ describe('live market data', () => {
     expect(await refreshLiveQuotes()).toBe('CLOSED');
     expect(await orderStatus(resting.body.order.id)).toBe('EXPIRED');
     expect(await orderStatus(amo.body.order.id)).toBe('OPEN');
+  });
+});
+
+describe('NSE stocks beyond the catalogue', () => {
+  beforeAll(() => {
+    yahoo.nseOnly.set('INOXWIND.NS', { name: 'Inox Wind Limited', sector: 'Industrials', industry: 'Specialty Industrial Machinery' });
+    yahoo.prices.set('INOXWIND.NS', 150.4);
+    yahoo.prevCloses.set('INOXWIND.NS', 148);
+  });
+
+  it('finds NSE stocks StockKaro does not list yet, without their BSE listings', async () => {
+    const { client } = await registerWithPin();
+    const res = await client.get('/api/securities/search?q=inox&exchange=true');
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.exchange).toEqual([
+      { symbol: 'INOXWIND', name: 'Inox Wind Limited', type: 'STOCK', sector: 'Industrials', industry: 'Specialty Industrial Machinery' },
+    ]);
+    // Without the flag, search stays within the listed securities.
+    expect((await client.get('/api/securities/search?q=inox')).body.exchange).toEqual([]);
+  });
+
+  it('lists a stock with real history and live prices when someone opens it', async () => {
+    const { client, user } = await registerWithPin();
+    const detail = await client.get('/api/securities/INOXWIND');
+    expect(detail.status).toBe(200);
+    expect(detail.body).toMatchObject({
+      priceSource: 'live',
+      quote: { symbol: 'INOXWIND', name: 'Inox Wind Limited', lastPrice: 150.4, prevClose: 148 },
+    });
+    const security = (await get<{ id: number; sector: string; industry: string; live_ticker: string; listing_date: string }>(
+      "SELECT id, sector, industry, live_ticker, listing_date FROM securities WHERE symbol = 'INOXWIND'",
+    ))!;
+    expect(security).toMatchObject({ sector: 'Industrials', industry: 'Specialty Industrial Machinery', live_ticker: 'INOXWIND.NS', listing_date: '2015-04-09' });
+    const history = await all('SELECT 1 FROM price_history WHERE security_id = ?', security.id);
+    expect(history).toHaveLength(30);
+    expect(await get("SELECT 1 FROM audit_logs WHERE action = 'SECURITY_LISTED_FROM_EXCHANGE' AND actor_id = ?", user.id)).toBeTruthy();
+
+    // Now it is an ordinary listed security: search lists it, and the feed keeps its price current.
+    const search = await client.get('/api/securities/search?q=inox&exchange=true');
+    expect(search.body.items.map((i: { symbol: string }) => i.symbol)).toEqual(['INOXWIND']);
+    expect(search.body.exchange).toEqual([]);
+    yahoo.prices.set('INOXWIND.NS', 161.25);
+    await refreshLiveQuotes();
+    expect(getQuoteBySymbol('INOXWIND')!.last).toBe(16_125);
+  });
+
+  it('answers 404 for names that are not on the NSE', async () => {
+    const { client } = await registerWithPin();
+    expect((await client.get('/api/securities/NOTALISTEDCO')).status).toBe(404);
+    expect(await get("SELECT 1 FROM securities WHERE symbol = 'NOTALISTEDCO'")).toBeUndefined();
+  });
+
+  it('limits how many new stocks one person can add in an hour', async () => {
+    const { user } = await registerWithPin();
+    const actor = { userId: user.id, role: 'USER' as const };
+    for (let i = 0; i <= LISTINGS_PER_HOUR; i++) {
+      yahoo.nseOnly.set(`NSECO${i}.NS`, { name: `NSE Company ${i}`, sector: 'Industrials', industry: 'Machinery' });
+      yahoo.prices.set(`NSECO${i}.NS`, 100 + i);
+    }
+    for (let i = 0; i < LISTINGS_PER_HOUR; i++) expect(await listFromExchange(`NSECO${i}`, actor)).toBe(true);
+    await expect(listFromExchange(`NSECO${LISTINGS_PER_HOUR}`, actor)).rejects.toMatchObject({ status: 429 });
   });
 });

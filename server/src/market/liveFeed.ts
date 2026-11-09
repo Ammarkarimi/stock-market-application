@@ -1,4 +1,4 @@
-import { all, insertMany, run, transaction } from '../db/index.js';
+import { insertMany, run, transaction } from '../db/index.js';
 import { nowIso, nowMs } from '../lib/clock.js';
 import { istDate } from '../lib/time.js';
 import { invalidateSecurityCache } from '../services/market.service.js';
@@ -11,10 +11,10 @@ import {
   currentTradingDate,
   reloadMarket,
   resetCurrentBars,
-  setExternallyPriced,
+  setExternalFeed,
   type ExternalQuote,
 } from './engine.js';
-import { getQuote } from './quoteStore.js';
+import { allQuotes, getQuote } from './quoteStore.js';
 import { BAR_MS, tickSizeFor } from './seedMarket.js';
 import {
   loadMarketSession,
@@ -33,7 +33,7 @@ const FUNDAMENTALS_FROM_QUOTES_MS = 60 * 60_000;
 /** How often the stored history is replaced with the exchange's. */
 const HISTORY_SYNC_MS = 20 * 60 * 60_000;
 
-interface LiveSecurity {
+export interface LiveSecurity {
   id: number;
   symbol: string;
   type: string;
@@ -41,7 +41,6 @@ interface LiveSecurity {
 }
 
 let client = new YahooFinance();
-let securities: LiveSecurity[] | null = null;
 let enabled = false;
 
 const paise = (rupees: number) => Math.round(rupees * 100);
@@ -71,14 +70,18 @@ async function eachLimited<T>(items: T[], limit: number, task: (item: T) => Prom
 }
 
 /**
- * Real exchange-listed securities from the reference catalogue. Securities added later (admin listings and
- * the fictional companies listed through the IPO simulation) keep simulated prices.
+ * Gives the reference catalogue's securities their exchange tickers. Admin listings and the fictional companies
+ * listed through the IPO simulation have none and keep simulated prices.
  */
-async function loadLiveSecurities(): Promise<LiveSecurity[]> {
-  const catalogue = new Set([...STOCKS, ...FUNDS, ...INDICES].map((s) => s.symbol));
-  return (await all<{ id: number; symbol: string; security_type: string }>('SELECT id, symbol, security_type FROM securities ORDER BY id'))
-    .filter((row) => catalogue.has(row.symbol))
-    .map((row) => ({ id: row.id, symbol: row.symbol, type: row.security_type, ticker: yahooTicker(row.symbol) }));
+async function assignCatalogueTickers(): Promise<void> {
+  const symbols = [...STOCKS, ...FUNDS, ...INDICES].map((s) => s.symbol);
+  await run(
+    `UPDATE securities AS s SET live_ticker = v.ticker
+       FROM unnest(?::text[], ?::text[]) AS v(symbol, ticker)
+      WHERE s.symbol = v.symbol AND s.live_ticker IS NULL`,
+    symbols,
+    symbols.map(yahooTicker),
+  );
 }
 
 /** Applies one batch of quotes from the feed; returns the exchange's current phase. */
@@ -163,7 +166,7 @@ function candleRow(securityId: number, key: string | number, c: YahooCandle): un
   return [securityId, key, open, Math.max(open, close, paise(c.high)), Math.min(open, close, paise(c.low)), close, c.volume];
 }
 
-async function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full: boolean): Promise<void> {
+export async function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[], full: boolean): Promise<void> {
   const tradingDate = currentTradingDate();
   const rows = new Map<string, YahooCandle>();
   for (const c of candles) {
@@ -184,7 +187,7 @@ async function storeDailyHistory(security: LiveSecurity, candles: YahooCandle[],
   });
 }
 
-async function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): Promise<void> {
+export async function storeIntraday(security: LiveSecurity, candles: YahooCandle[]): Promise<void> {
   if (candles.length === 0) return;
   const bars = new Map<number, YahooCandle>();
   for (const c of candles) bars.set(Math.floor((c.time * 1000) / BAR_MS) * BAR_MS, c);
@@ -207,7 +210,7 @@ export async function liveHistoryDue(): Promise<boolean> {
 
 /** Replaces stored daily and five-minute history with the exchange's. */
 export async function syncLiveHistory(): Promise<void> {
-  const securities = await liveSecurities();
+  const securities = liveSecurities();
   const lastSync = await getState('liveHistorySyncedAt');
   const full = !lastSync || nowMs() - Date.parse(lastSync) > FULL_HISTORY_AFTER_DAYS * 86_400_000;
   const started = nowMs();
@@ -226,7 +229,7 @@ export async function syncLiveHistory(): Promise<void> {
 export async function syncLiveFundamentals(): Promise<void> {
   const today = istDate();
   if ((await getState('liveFundamentalsSyncedOn')) === today) return;
-  const stocks = (await liveSecurities()).filter((s) => s.type === 'STOCK');
+  const stocks = liveSecurities().filter((s) => s.type === 'STOCK');
   const round2 = (v: number) => Math.round(v * 100) / 100;
   const crore = (v: number | null) => (v === null ? null : Math.round(v / 1e7));
   const failures = await eachLimited(stocks, 3, async (security) => {
@@ -269,20 +272,22 @@ export async function syncLiveFundamentals(): Promise<void> {
   console.log(`Live market data: fundamentals for ${stocks.length - failures} of ${stocks.length} companies`);
 }
 
-/** The catalogue securities priced by the feed, loaded once per server instance. */
-async function liveSecurities(): Promise<LiveSecurity[]> {
-  securities ??= await loadLiveSecurities();
-  return securities;
+/** Securities the feed prices: the catalogue's exchange-listed ones and NSE stocks listed on demand. */
+function liveSecurities(): LiveSecurity[] {
+  return allQuotes()
+    .filter((q) => q.liveTicker !== null)
+    .map((q) => ({ id: q.securityId, symbol: q.symbol, type: q.type, ticker: q.liveTicker! }));
 }
 
 /**
- * Prices the catalogue's exchange-listed securities from the feed instead of the simulator. Nothing is fetched
- * here: quotes arrive with refreshLiveQuotes(), which the market runtime calls while people use the site.
+ * Prices exchange-listed securities (those with a live ticker) from the feed instead of the simulator. Nothing is
+ * fetched here: quotes arrive with refreshLiveQuotes(), which the market runtime calls while people use the site.
  */
 export async function enableLiveFeed(provider: YahooFinance = new YahooFinance()): Promise<void> {
   client = provider;
-  securities = null;
-  setExternallyPriced((await liveSecurities()).map((s) => s.id));
+  await assignCatalogueTickers();
+  await reloadMarket();
+  setExternalFeed(true);
   setMarketSource('yahoo');
   enabled = true;
 }
@@ -291,13 +296,18 @@ export function liveFeedEnabled(): boolean {
   return enabled;
 }
 
+/** The market data provider the feed uses (a stand-in in tests). */
+export function liveClient(): YahooFinance {
+  return client;
+}
+
 /**
  * Fetches the latest quotes and applies them: the trading date follows the exchange's session, and order
  * matching and alerts react to the new prices. The network request runs outside any transaction.
  * Returns the exchange's current phase; a failed refresh is recorded on the market session and rethrown.
  */
 export async function refreshLiveQuotes(): Promise<MarketPhase> {
-  const securities = await liveSecurities();
+  const securities = liveSecurities();
   let quotes: YahooQuote[];
   try {
     quotes = await client.quotes(securities.map((s) => s.ticker));
