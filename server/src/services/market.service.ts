@@ -52,6 +52,7 @@ interface SecurityRow {
   is_tradable: number;
   trading_status: 'ACTIVE' | 'HALTED';
   listing_date: string | null;
+  live_ticker: string | null;
 }
 
 /** Call after securities are added or edited: reference data such as shares outstanding is cached with the quotes. */
@@ -311,7 +312,8 @@ export async function getSecurityDetail(symbol: string): Promise<SecurityDetail>
   const financials = reported.length > 0 ? reported : syntheticFinancials(row);
   return {
     priceSource: isExternallyPriced(quote.securityId) ? 'live' : 'simulated',
-    analysisSymbol: CATALOGUED_SYMBOLS.has(row.symbol) ? yahooTicker(row.symbol) : null,
+    // Real securities can be analysed: those the live feed prices, and the catalogue (also when simulated).
+    analysisSymbol: row.live_ticker ?? (CATALOGUED_SYMBOLS.has(row.symbol) ? yahooTicker(row.symbol) : null),
     financialsSource: financials.length === 0 ? null : reported.length > 0 ? 'reported' : 'illustrative',
     quote: toQuoteDto(quote),
     security: {

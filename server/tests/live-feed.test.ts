@@ -249,6 +249,7 @@ describe('NSE stocks beyond the catalogue', () => {
     expect(detail.status).toBe(200);
     expect(detail.body).toMatchObject({
       priceSource: 'live',
+      analysisSymbol: 'INOXWIND.NS',
       quote: { symbol: 'INOXWIND', name: 'Inox Wind Limited', lastPrice: 150.4, prevClose: 148 },
     });
     const security = (await get<{ id: number; sector: string; industry: string; live_ticker: string; listing_date: string }>(
